@@ -1,0 +1,12 @@
+{
+  "math-tool-v1": {
+    "version": "1",
+    "criteria": [
+      "The final answer matches the expected mathematical result.",
+      "Required tools are selected with correct arguments and order.",
+      "Tool errors are reported without fabricating a numeric result.",
+      "Unsupported operations are refused clearly without an invented tool call."
+    ],
+    "deterministic_assertions_are_authoritative": true
+  }
+}

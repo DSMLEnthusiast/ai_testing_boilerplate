@@ -1,0 +1,25 @@
+.env
+.pytest_cache/
+__pycache__/
+*.py[cod]
+# Test and evaluation results (generated output)
+test-results.json
+results.json
+*.html
+# DeepEval artifacts
+.deepeval/
+# Documents
+docs/
+# Virtual Environments
+.venv/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# OS
+.DS_Store
+# Distribution
+dist/
+build/
+*.egg-info/

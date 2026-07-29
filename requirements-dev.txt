@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=7
+deepeval
+deepteam
+github-copilot-sdk
+matplotlib>=3.5
+plotly>=5.0
