@@ -23,7 +23,7 @@ import pytest
 def is_sdk_installed() -> bool:
     """Check if Copilot SDK is installed and importable."""
     try:
-        import github_copilot_cli  # noqa: F401
+        import copilot  # noqa: F401
         return True
     except ImportError:
         return False
@@ -93,6 +93,17 @@ def expected_results() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
+def judge_rubrics() -> dict[str, Any]:
+    """Load judge rubrics from evals/golden/judge-rubrics.json."""
+    root = Path(__file__).resolve().parents[3]
+    rubrics_path = root / "evals" / "golden" / "judge-rubrics.json"
+    if not rubrics_path.exists():
+        # Fallback: might be running from subdirectory
+        rubrics_path = Path(__file__).resolve().parents[4] / "evals" / "golden" / "judge-rubrics.json"
+    return json.loads(rubrics_path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="session")
 def tool_scenarios(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter scenarios that have expected_tools (tool-based, not metric-only)."""
     return [s for s in scenarios if s.get("expected_tools")]
@@ -125,10 +136,10 @@ def pytest_generate_tests(metafunc: Any) -> None:
     if "scenario" in metafunc.fixturenames:
         # Path: evals/eval_python/test_agent/conftest.py -> up 3 levels to repo root
         root = Path(__file__).resolve().parents[3]
-        scenarios_path = root / "fixtures" / "scenarios.json"
+        scenarios_path = root / "evals" / "golden" / "scenarios.json"
         if not scenarios_path.exists():
             # Fallback: might be running from subdirectory
-            scenarios_path = Path(__file__).resolve().parents[4] / "fixtures" / "scenarios.json"
+            scenarios_path = Path(__file__).resolve().parents[4] / "evals" / "golden" / "scenarios.json"
         scenarios = json.loads(scenarios_path.read_text(encoding="utf-8"))
 
         # Parametrize with full scenario dict, using scenario ID as test ID

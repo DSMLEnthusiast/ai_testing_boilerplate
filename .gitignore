@@ -22,4 +22,6 @@ docs/
 # Distribution
 dist/
 build/
+bin/
+obj/
 *.egg-info/

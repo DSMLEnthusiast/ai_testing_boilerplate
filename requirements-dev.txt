@@ -1,6 +1,6 @@
 -r requirements.txt
 pytest>=7
-deepeval
+deepeval[inspect]
 deepteam
 github-copilot-sdk
 matplotlib>=3.5

@@ -11,6 +11,16 @@ from pathlib import Path
 from typing import Any
 
 
+def _approve_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
+    return {"kind": "approved", "rules": []}
+
+
+def _canonical_tool_name(name: Any) -> Any:
+    if isinstance(name, str) and name.startswith("math-mcp-"):
+        return name.removeprefix("math-mcp-")
+    return name
+
+
 class BaseLLM(ABC):
     """Abstract base class for LLM evaluation backends.
 
@@ -54,7 +64,6 @@ class CopilotLLM(BaseLLM):
         """
         try:
             from copilot import CopilotClient
-            from copilot.session import PermissionHandler
         except ImportError as error:
             raise RuntimeError("Install github-copilot-sdk to run Copilot-backed evaluations") from error
 
@@ -63,6 +72,7 @@ class CopilotLLM(BaseLLM):
         client = CopilotClient()
         client_started = False
         tool_calls = []
+        tool_calls_by_id: dict[str, dict[str, Any]] = {}
         tool_results = []
         response_text = ""
         usage = {}
@@ -73,21 +83,47 @@ class CopilotLLM(BaseLLM):
         try:
             await client.start()
             client_started = True
-            session = await client.create_session(
-                model=self.session_options.get("model", os.environ.get("COPILOT_MODEL", "gpt-5")),
-                on_permission_request=PermissionHandler.approve_all,
-                mcp_servers={
+            session = await client.create_session({
+                "model": self.session_options.get("model", os.environ.get("COPILOT_MODEL", "gpt-5")),
+                "on_permission_request": _approve_permission_request,
+                "mcp_servers": {
                     "math-mcp": {
                         "type": "stdio",
-                        "command": "python",
+                        "tools": ["*"],
+                        "command": sys.executable,
                         "args": ["-m", "mcp_app.server"],
                         "cwd": str(root),
                         "env": {"PYTHONPATH": str(root / "src")},
                     }
                 },
-            )
+            })
 
-            response = await session.send_and_wait(prompt)
+            def handle_event(event: Any) -> None:
+                event_type = getattr(getattr(event, "type", None), "value", None)
+                data = getattr(event, "data", None)
+                if event_type == "assistant.message":
+                    for request in getattr(data, "tool_requests", None) or []:
+                        tool_call_id = getattr(request, "tool_call_id", None)
+                        if not isinstance(tool_call_id, str):
+                            continue
+                        tool_calls_by_id[tool_call_id] = {
+                            "name": _canonical_tool_name(getattr(request, "name", None)),
+                            "arguments": getattr(request, "arguments", {}),
+                            "event_id": tool_call_id,
+                        }
+                elif event_type == "tool.execution_complete":
+                    tool_call_id = getattr(data, "tool_call_id", None)
+                    if not isinstance(tool_call_id, str):
+                        return
+                    tool_call = tool_calls_by_id.get(tool_call_id)
+                    if tool_call is None:
+                        return
+                    result = getattr(data, "result", None)
+                    tool_call["result"] = getattr(result, "content", result)
+
+            unsubscribe = session.on(handle_event)
+            response = await session.send_and_wait({"prompt": prompt})
+            unsubscribe()
 
             # Extract response content
             if hasattr(response.data, "content"):
@@ -97,18 +133,9 @@ class CopilotLLM(BaseLLM):
             else:
                 response_text = str(response.data)
 
-            # Attempt to extract tool calls and results if available
-            if hasattr(response, "tool_calls"):
-                raw_tool_calls = response.tool_calls
-                if isinstance(raw_tool_calls, (list, tuple)):
-                    tool_calls = list(raw_tool_calls)
-                    trace_status = "complete"
-                else:
-                    trace_status = "invalid"
-            if hasattr(response, "tool_results"):
-                raw_tool_results = response.tool_results
-                if isinstance(raw_tool_results, (list, tuple)):
-                    tool_results = list(raw_tool_results)
+            tool_calls = list(tool_calls_by_id.values())
+            tool_results = [call.get("result") for call in tool_calls if "result" in call]
+            trace_status = "complete"
 
             # Extract usage if available
             if hasattr(response, "usage"):

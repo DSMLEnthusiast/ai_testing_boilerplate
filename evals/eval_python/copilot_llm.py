@@ -16,6 +16,10 @@ except ImportError:
 StructuredModel = TypeVar("StructuredModel")
 
 
+def _approve_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
+    return {"kind": "approved", "rules": []}
+
+
 class CopilotLLMJudge(DeepEvalBaseLLM):
     """DeepEval judge that sends evaluation prompts through Copilot SDK.
 
@@ -68,7 +72,6 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
         """Generate a text or structured judge response asynchronously."""
         try:
             from copilot import CopilotClient
-            from copilot.session import PermissionHandler
         except ImportError as error:
             raise RuntimeError(
                 "Install github-copilot-sdk to use CopilotLLMJudge as a DeepEval judge"
@@ -78,14 +81,14 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
         await asyncio.wait_for(client.start(), timeout=self.timeout)
         try:
             session = await asyncio.wait_for(
-                client.create_session(
-                    model=self.model_name,
-                    on_permission_request=PermissionHandler.approve_all,
-                ),
+                client.create_session({
+                    "model": self.model_name,
+                    "on_permission_request": _approve_permission_request,
+                }),
                 timeout=self.timeout,
             )
             response = await asyncio.wait_for(
-                session.send_and_wait(prompt),
+                session.send_and_wait({"prompt": prompt}),
                 timeout=self.timeout,
             )
             text = self._response_text(response)
@@ -99,12 +102,17 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
 
     @staticmethod
     def _response_text(response: Any) -> str:
-        data = response.data
-        if hasattr(data, "content"):
-            return str(data.content)
-        if hasattr(data, "text"):
-            return str(data.text)
-        return str(data)
+        for value in (response, getattr(response, "data", response)):
+            if isinstance(value, dict):
+                for key in ("content", "text", "output"):
+                    text = value.get(key)
+                    if text is not None:
+                        return str(text)
+            for attribute in ("content", "text", "output"):
+                text = getattr(value, attribute, None)
+                if text is not None:
+                    return str(text)
+        return str(getattr(response, "data", response))
 
     @staticmethod
     def _parse_response(
@@ -113,9 +121,16 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
     ) -> str | StructuredModel:
         if schema is None:
             return text
+        normalized_text = text.strip()
+        if normalized_text.startswith("```"):
+            lines = normalized_text.splitlines()
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            normalized_text = "\n".join(lines).strip()
         if hasattr(schema, "model_validate_json"):
-            return schema.model_validate_json(text)  # type: ignore[attr-defined, no-any-return]
+            return schema.model_validate_json(normalized_text)  # type: ignore[attr-defined, no-any-return]
         if hasattr(schema, "parse_raw"):
-            return schema.parse_raw(text)  # type: ignore[attr-defined, no-any-return]
+            return schema.parse_raw(normalized_text)  # type: ignore[attr-defined, no-any-return]
         raise TypeError("DeepEval structured output schema must be a Pydantic model")
 

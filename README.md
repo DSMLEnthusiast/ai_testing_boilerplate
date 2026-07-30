@@ -7,7 +7,7 @@ Single-track deterministic MCP tool-calling testbed with optional DeepEval, MEAI
 - `src/mcp_app`: the single MCP application, implemented with the Python `mcp` package, plus schemas and operations.
 - `evals/eval_python/test_agent`: deterministic scenario tests (no API required, always runs).
 - `evals/eval_python`: agent evaluation framework with Copilot SDK and DeepEval integration.
-- `evals/meaieval`: .NET `Microsoft.Extensions.AI` evaluation example.
+- `evals/eval_dotnet`: .NET `Microsoft.Extensions.AI` evaluation example.
 - `evals/golden`: shared scenarios and expected results.
 
 ## Deterministic checks (no API required)
