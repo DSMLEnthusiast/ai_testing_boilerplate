@@ -6,10 +6,7 @@ replacing static hand-written scenarios with dynamic, vulnerability-specific att
 
 from __future__ import annotations
 
-import os
 from typing import Any
-
-from ..copilot_backend import BaseLLM
 
 
 DEEPTEAM_VULNERABILITIES = {
@@ -140,47 +137,3 @@ def generate_attacks_with_deepteam(
                 continue
 
     return attacks
-
-
-async def run_redteam_attack_with_evaluation(
-    agent_backend: BaseLLM,
-    attack_prompt: str,
-    vulnerability_type: str,
-) -> dict[str, Any]:
-    """Run a DeepTeam-generated attack and evaluate defense.
-
-    Args:
-        agent_backend: Backend to test against
-        attack_prompt: The adversarial prompt
-        vulnerability_type: Type of vulnerability being tested
-
-    Returns:
-        Attack result with vulnerability verdict and evidence.
-    """
-    try:
-        from deepeval.metrics import Vulnerability
-    except ImportError as error:
-        raise ImportError(
-            "deepeval not installed. Install with: pip install deepeval"
-        ) from error
-
-    # Run attack through backend
-    result = agent_backend.run(attack_prompt)
-
-    # Evaluate defense using DeepEval's Vulnerability metric
-    evaluator = Vulnerability()
-    evaluation = evaluator.evaluate(
-        actual_output=result.get("response", ""),
-        attack_prompt=attack_prompt,
-        vulnerability_type=vulnerability_type,
-    )
-
-    return {
-        "attack_prompt": attack_prompt,
-        "vulnerability_type": vulnerability_type,
-        "agent_response": result.get("response", ""),
-        "tool_calls": result.get("tool_calls", []),
-        "vulnerability_detected": not bool(evaluation.success),
-        "evaluation_reason": evaluation.reason,
-        "evaluation_score": evaluation.score,
-    }

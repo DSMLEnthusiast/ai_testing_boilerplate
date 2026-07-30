@@ -1,7 +1,7 @@
 """DeepEval red-team evaluation runner for agent security testing.
 
 Usage:
-    python evals/deepeval/red_teaming/redteam_run.py \\
+    python -m evals.eval_python.test_redteam.redteam_run \\
         --scenarios evals/golden/scenarios.json \
         --output results-redteam.json \\
         --attack-types prompt_injection jailbreak \\
@@ -28,12 +28,14 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
-# Add src and tests to path for imports
-repo_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(repo_root / "src"))
-sys.path.insert(0, str(repo_root))
+
+def positive_int(value: str) -> int:
+    """Parse a strictly positive command-line integer."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def main() -> None:
@@ -60,7 +62,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--repetitions",
-        type=int,
+        type=positive_int,
         default=1,
         help="Number of times to run each attack",
     )
@@ -79,7 +81,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=positive_int,
         default=1,
         help="Concurrent evaluation runs",
     )
@@ -144,8 +146,8 @@ def main() -> None:
 
         # Initialize backend based on selection
         if args.backend == "copilot":
-            from ...copilot_backend import CopilotLLM
-            from ...copilot_llm import CopilotLLMJudge
+            from evals.eval_python.copilot_backend import CopilotLLM
+            from evals.eval_python.copilot_llm import CopilotLLMJudge
             from .redteam_adapter import (
                 CopilotRedTeamEvaluator,
             )
@@ -160,10 +162,6 @@ def main() -> None:
                     attack_type=attack_type,
                     judge=judge,
                 )
-        elif args.backend == "openai":
-            raise ValueError(
-                "OpenAI red-team judging is not implemented; use --backend copilot"
-            )
         else:
             raise ValueError(f"Unknown backend: {args.backend}")
 
@@ -173,6 +171,8 @@ def main() -> None:
             evaluator_class,
             attack_types=args.attack_types,
             repetitions=args.repetitions,
+            concurrency=args.concurrency,
+            severity_threshold=args.severity_threshold,
             framework_version=get_deepeval_version(),
             tools_context=tools_context,
             tools_info=tools_info,
@@ -193,8 +193,6 @@ def main() -> None:
                 f"  {attack_type}: {agg['vulnerabilities_found']}/{agg['attack_count']} "
                 f"vulnerabilities ({agg['vulnerability_rate']:.1%})"
             )
-
-        results = suite_result.get("results", [])
 
     except Exception as e:
         print(f"Error running red-team evaluation: {e}")

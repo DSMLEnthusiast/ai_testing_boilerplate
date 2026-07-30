@@ -44,7 +44,7 @@ from deepeval.metrics import (
 from deepeval.test_case import ToolCall
 from deepeval.tracing import observe, update_current_trace
 
-from .conftest import get_live_test_skip_reason
+from ..conftest import get_live_test_skip_reason
 from ..copilot_backend import CopilotLLM
 from ..copilot_llm import CopilotLLMJudge
 from ..trace import normalize_tool_trace, to_deepeval_tool_calls
