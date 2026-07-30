@@ -13,7 +13,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS_PATH = REPO_ROOT / "evals" / "golden" / "scenarios.json"
-EXPECTED_RESULTS_PATH = REPO_ROOT / "evals" / "golden" / "expected-results.json"
 JUDGE_RUBRICS_PATH = REPO_ROOT / "evals" / "golden" / "judge-rubrics.json"
 
 
@@ -69,12 +68,6 @@ def get_live_test_skip_reason() -> str | None:
 def scenarios() -> list[dict[str, Any]]:
     """Load all test scenarios from the shared fixture."""
     return json.loads(SCENARIOS_PATH.read_text(encoding="utf-8"))
-
-
-@pytest.fixture(scope="session")
-def expected_results() -> dict[str, Any]:
-    """Load expected results from the shared fixture."""
-    return json.loads(EXPECTED_RESULTS_PATH.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")

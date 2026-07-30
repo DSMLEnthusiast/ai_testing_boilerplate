@@ -202,7 +202,7 @@ red-team execution should be a separately configured job with credentials and
   - `copilot_backend.py`: Contains `BaseLLM` (abstract), `CopilotLLM` (Copilot SDK implementation)
   - `copilot_llm.py`: Contains `CopilotLLMJudge` (DeepEval judge)
   - `trace.py`: Tool trace normalization
-- **`evals/golden/`**: Test scenarios and expected results (scenarios.json, expected-results.json)
+- **`evals/golden/`**: Test scenarios and expected outcomes (scenarios.json)
 
 ### Class Hierarchy
 ```python
@@ -254,8 +254,7 @@ score = judge.generate(prompt, schema=MetricType)
 
 ### Add a New Test Scenario
 1. Add JSON to `evals/golden/scenarios.json` with: `id`, `prompt`, `expected_tools` or `metric_type`
-2. Add expected results to `evals/golden/expected-results.json`
-3. Tests auto-parametrize by scenario ID
+2. Tests auto-parametrize by scenario ID
 
 ### Create a Custom Backend
 1. Inherit from `BaseLLM`

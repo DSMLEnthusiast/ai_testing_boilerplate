@@ -2,10 +2,9 @@
 
 This suite:
 1. Validates scenario schema integrity
-2. Verifies expected results exist in fixtures
-3. Executes scenarios locally using operations.execute()
-4. Validates results match expected outcomes
-5. Handles error scenarios explicitly
+2. Executes scenarios locally using operations.execute()
+3. Validates results match scenario expectations
+4. Handles error scenarios explicitly
 
 Run with:
     pytest evals/deepeval_v2/test_scenarios_deterministic.py -v
@@ -13,7 +12,6 @@ Run with:
 
 from __future__ import annotations
 
-import json
 import math
 from typing import Any
 
@@ -45,40 +43,45 @@ class TestScenarioFixtures:
 
 
 class TestScenarioExpectations:
-    """Verify expected results exist and match scenario."""
+    """Verify each scenario contains a valid outcome expectation."""
 
-    def test_scenario_has_expected_result(
-        self, scenario: dict[str, Any], expected_results: dict[str, Any]
-    ) -> None:
-        """Verify expected result exists for this scenario."""
+    def test_scenario_has_expected_result(self, scenario: dict[str, Any]) -> None:
+        """Verify the scenario defines an outcome expectation."""
         scenario_id = scenario["id"]
-        assert (
-            scenario_id in expected_results
-        ), f"No expected result for scenario {scenario_id}"
+        expectation_fields = {
+            "expected",
+            "expected_error",
+            "expected_response",
+            "expected_response_contains",
+        }
+        assert expectation_fields.intersection(scenario), (
+            f"No expected result for scenario {scenario_id}"
+        )
 
-    def test_expected_result_shape(
-        self, scenario: dict[str, Any], expected_results: dict[str, Any]
-    ) -> None:
-        """Verify expected result has valid shape."""
+    def test_expected_result_shape(self, scenario: dict[str, Any]) -> None:
+        """Verify the scenario expectation has a valid shape."""
         scenario_id = scenario["id"]
-        expected = expected_results[scenario_id]
 
         # Check for response-only scenarios (no tools, just response validation)
-        if "response_contains" in expected:
-            assert isinstance(expected["response_contains"], str), (
-                "response_contains must be string"
+        if "expected_response_contains" in scenario:
+            assert isinstance(scenario["expected_response_contains"], str), (
+                "expected_response_contains must be string"
             )
-            return  # Response-only scenario
+        if "expected_response" in scenario:
+            assert isinstance(scenario["expected_response"], str), (
+                "expected_response must be string"
+            )
 
-        # Must be either {"value": ..., "operation": ...} or {"error": ...}
-        if "error" in expected:
-            assert isinstance(expected["error"], str), "error must be string"
-            # Should not have both error and value
-            assert (
-                "value" not in expected
-            ), "Cannot have both error and value"
-        else:
-            # Tool-based scenario should have value
+        if "expected_error" in scenario:
+            assert isinstance(scenario["expected_error"], str), (
+                "expected_error must be string"
+            )
+            assert "expected" not in scenario, "Cannot have both expected_error and expected"
+            return
+
+        if "expected" in scenario:
+            expected = scenario["expected"]
+            assert isinstance(expected, dict), "expected must be an object"
             assert "value" in expected or "operation" in expected, (
                 f"Expected result for {scenario_id} must have value or operation"
             )
@@ -88,30 +91,31 @@ class TestScenarioMockExecution:
     """Execute scenarios locally and validate results."""
 
     def test_scenario_expected_tools_execute_successfully(
-        self, scenario: dict[str, Any], expected_results: dict[str, Any]
+        self, scenario: dict[str, Any]
     ) -> None:
         """Execute expected_tools and verify result matches expected."""
         if not scenario.get("expected_tools"):
             pytest.skip("metric-only scenario")
 
         scenario_id = scenario["id"]
-        expected = expected_results[scenario_id]
+        expected = scenario.get("expected", {})
         expected_tools = scenario["expected_tools"]
 
         # If we expect an error, the operation should fail
-        if "error" in expected:
+        if scenario.get("expected_error"):
+            expected_error = scenario["expected_error"]
             # Try to execute and expect the operation to raise an error
             for call in expected_tools:
                 try:
                     result = execute(call["name"], call.get("arguments", {}))
                     # If we got here without error, the test fails
                     pytest.fail(
-                        f"Expected error {expected['error']} but got result: {result}"
+                        f"Expected error {expected_error} but got result: {result}"
                     )
                 except OperationError as e:
                     # Verify error category matches
-                    assert e.category == expected["error"], (
-                        f"Expected {expected['error']}, got {e.category}"
+                    assert e.category == expected_error, (
+                        f"Expected {expected_error}, got {e.category}"
                     )
                     return  # Success: got expected error
         else:
@@ -142,7 +146,7 @@ class TestScenarioMockExecution:
                     )
 
     def test_scenario_error_handling(
-        self, scenario: dict[str, Any], expected_results: dict[str, Any]
+        self, scenario: dict[str, Any]
     ) -> None:
         """Verify error scenarios produce expected failure_category."""
         if not scenario.get("expected_error"):

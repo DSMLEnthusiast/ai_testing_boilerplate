@@ -12,7 +12,6 @@ Run with:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -22,19 +21,6 @@ from mcp_app.operations import execute, OperationError
 
 class TestIntegrationScenarioPipeline:
     """End-to-end validation of scenario pipeline."""
-
-    def test_all_scenarios_have_expected_results(
-        self, scenarios: list[dict[str, Any]], expected_results: dict[str, Any]
-    ) -> None:
-        """Verify every scenario has a corresponding expected result."""
-        scenario_ids = {s["id"] for s in scenarios}
-        expected_ids = set(expected_results.keys())
-
-        assert scenario_ids == expected_ids, (
-            f"Scenario ID mismatch:\n"
-            f"  Missing expected results: {scenario_ids - expected_ids}\n"
-            f"  Orphaned expected results: {expected_ids - scenario_ids}"
-        )
 
     def test_scenario_discovery_count(
         self,

@@ -122,8 +122,7 @@ The evaluation uses these standardized categories:
 ## Integration with shared contract
 
 This adapter uses:
-- Shared scenarios from `evals/golden/scenarios.json`
-- Shared expected results from `evals/golden/expected-results.json`
+- Shared scenarios and expected outcomes from `evals/golden/scenarios.json`
 - Shared MCP server from `src/mcp_app/`
 - Normalized result schema matching the deterministic Python runner
 

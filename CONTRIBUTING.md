@@ -81,18 +81,7 @@ Edit [evals/golden/scenarios.json](evals/golden/scenarios.json):
 }
 ```
 
-### 5. Update expected results
-
-Edit [evals/golden/expected-results.json](evals/golden/expected-results.json):
-
-```json
-{
-  "my-operation-basic": {"value": 5, "operation": "my_operation"},
-  "my-operation-error": {"error": "domain_error"}
-}
-```
-
-### 6. Run tests
+### 5. Run tests
 
 ```bash
 # Unit tests
@@ -131,20 +120,7 @@ python -m pytest tests/ -v
 - `expected_tools`: Tool calls that should occur
 - `expected`: Numeric result OR `expected_error` for error cases
 
-### 2. Add expected result
-
-Edit [evals/golden/expected-results.json](evals/golden/expected-results.json):
-
-```json
-{
-  "unique-scenario-id": {
-    "value": 5,
-    "operation": "tool_name"
-  }
-}
-```
-
-### 3. Test deterministically
+### 2. Test deterministically
 
 ```bash
 python evals/run_scenarios.py --output results.json
@@ -300,7 +276,7 @@ python evals/my_framework/run.py --repetitions 2
 ## Pull Request Checklist
 
 - [ ] New operation: unit test, MCP test, scenario, expected result added
-- [ ] New scenario: evals/golden/scenarios.json updated, expected-results.json updated
+- [ ] New scenario: evals/golden/scenarios.json updated with its expected outcome
 - [ ] New adapter: adapter.py, test_adapter.py, run.py, pyproject.toml updated
 - [ ] All deterministic tests pass: `pytest tests/ -v`
 - [ ] Fixture evaluation passes: `python evals/run_scenarios.py`
