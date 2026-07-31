@@ -5,8 +5,9 @@ Requires:
     Copilot SDK installed (pip install github-copilot-sdk)
     copilot CLI available (bundled with SDK)
     Authentication configured (COPILOT_GITHUB_TOKEN env var or 'copilot auth login')
-    COPILOT_MODEL (optional, defaults to gpt-5)
-    COPILOT_JUDGE_MODEL (optional, defaults to gpt-4o)
+    COPILOT_BACKEND (optional, mcp or agent; defaults to mcp)
+    COPILOT_MODEL (optional, defaults to gpt-5-mini)
+    COPILOT_JUDGE_MODEL (optional, defaults to gpt-5-mini)
 
 This suite:
 1. Runs scenarios through CopilotLLM with native tracing
@@ -45,7 +46,7 @@ from deepeval.test_case import ToolCall
 from deepeval.tracing import observe, update_current_trace
 
 from ..conftest import get_live_test_skip_reason
-from ..copilot_backend import CopilotLLM
+from ..copilot_backend import create_copilot_backend
 from ..copilot_llm import CopilotLLMJudge
 from ..trace import normalize_tool_trace, to_deepeval_tool_calls
 
@@ -106,7 +107,7 @@ class TestScenariosToolCorrectness:
         dataset = EvaluationDataset(goldens=[golden])
 
         # Create backend (fresh instance per test)
-        backend = CopilotLLM()
+        backend = create_copilot_backend()
 
         # Define agent with tracing
         @observe(name="math_agent")
@@ -167,7 +168,7 @@ class TestScenariosAnswerRelevancy:
         dataset = EvaluationDataset(goldens=[golden])
 
         # Create backend (fresh instance per test)
-        backend = CopilotLLM()
+        backend = create_copilot_backend()
 
         # Define agent with tracing
         @observe(name="math_agent")
@@ -201,7 +202,7 @@ class TestScenariosTaskCompletion:
         golden = Golden(input=scenario["prompt"])
         dataset = EvaluationDataset(goldens=[golden])
 
-        backend = CopilotLLM()
+        backend = create_copilot_backend()
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
@@ -247,7 +248,7 @@ class TestScenariosStepEfficiency:
         golden = Golden(input=scenario["prompt"])
         dataset = EvaluationDataset(goldens=[golden])
 
-        backend = CopilotLLM()
+        backend = create_copilot_backend()
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
@@ -290,7 +291,7 @@ class TestScenariosPromptAlignment:
         golden = Golden(input=scenario["prompt"])
         dataset = EvaluationDataset(goldens=[golden])
 
-        backend = CopilotLLM()
+        backend = create_copilot_backend()
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:

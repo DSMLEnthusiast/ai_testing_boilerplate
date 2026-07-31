@@ -38,16 +38,21 @@ python -m pip install -r requirements.txt
 ```
 
 The Copilot SDK backend is intentionally opt-in. Set `RUN_LLM_EVALS=1` before
-running provider-backed tests. The system under test uses `CopilotBackend`,
-while DeepEval metrics use an independent `CopilotLLM` judge. Configure them
-separately with `COPILOT_MODEL` and `COPILOT_JUDGE_MODEL`:
+running provider-backed tests. The system under test uses the selected
+`CopilotMCPBackEnd` or `CopilotAgentBackend`, while DeepEval metrics use an
+independent `CopilotLLMJudge`. Configure them
+separately with `COPILOT_BACKEND`, `COPILOT_MODEL`, and `COPILOT_JUDGE_MODEL`:
 
 ```powershell
 $env:RUN_LLM_EVALS = "1"
-$env:COPILOT_MODEL = "gpt-5"
-$env:COPILOT_JUDGE_MODEL = "gpt-4o"
+$env:COPILOT_BACKEND = "mcp"
+$env:COPILOT_MODEL = "gpt-5-mini"
+$env:COPILOT_JUDGE_MODEL = "gpt-5-mini"
 python -m pytest evals/eval_python/test_agent/test_scenarios_live.py -v -s
 ```
+
+Set `COPILOT_BACKEND=agent` to load the custom agents from
+`.github/agents/math_agent`; `mcp` calls the MCP tools directly and is the default.
 
 Deterministic tool names, arguments, results, and error categories remain
 authoritative over judge output. Judge or provider failures are recorded as
@@ -85,10 +90,25 @@ Provider-backed attacks use the same opt-in guard as the live agent tests:
 
 ```powershell
 $env:RUN_LLM_EVALS = "1"
-$env:COPILOT_MODEL = "gpt-5"
-$env:COPILOT_JUDGE_MODEL = "gpt-4o"
+$env:COPILOT_BACKEND = "mcp"
+$env:COPILOT_MODEL = "gpt-5-mini"
+$env:COPILOT_JUDGE_MODEL = "gpt-5-mini"
 python -m pytest evals/eval_python/test_redteam/test_redteam.py -m live -v -s
 ```
+
+Pytest also supports the repeated and tool-aware red-team suite controls that
+are available in the CLI:
+
+```powershell
+python -m pytest evals/eval_python/test_redteam/test_redteam.py -m live -v -s `
+  --redteam-repetitions 3 `
+  --redteam-concurrency 2 `
+  --redteam-tool-aware `
+  --redteam-attack-types prompt_injection jailbreak
+```
+
+These options switch pytest to aggregate suite mode; the default pytest run
+keeps one independently reported test per attack scenario.
 
 For repeated runs, filtering, tool-aware generation, and JSON output, use the
 CLI runner:
@@ -96,7 +116,7 @@ CLI runner:
 ```powershell
 python -m evals.eval_python.test_redteam.redteam_run `
   --backend copilot `
-  --model gpt-5 `
+  --model gpt-5-mini `
   --repetitions 3 `
   --output results-redteam.json
 
@@ -109,7 +129,8 @@ python -m evals.eval_python.test_redteam.redteam_run `
 
 The runner currently supports the Copilot backend only. Set
 `RUN_LLM_EVALS=1`, configure authentication, and optionally set
-`COPILOT_MODEL` and `COPILOT_JUDGE_MODEL` before running it.
+`COPILOT_BACKEND` to `agent` to load `.github/agents/math_agent`.
+`COPILOT_MODEL` and `COPILOT_JUDGE_MODEL` remain independently configurable.
 
 ### Attack Coverage
 
@@ -139,9 +160,10 @@ The implementation is organized under `evals/eval_python/test_redteam`:
 - `tool_extractor.py`: MCP tool description extraction; and
 - `reporting.py`: text, HTML, CSV, and JSON report generation.
 
-The agent backend and judge are separate: `CopilotLLM` runs the target agent
-with MCP tools, while `CopilotLLMJudge` evaluates the result without those
-tools. Judge or provider failures are recorded as failures, not vulnerabilities.
+The agent backend and judge are separate: the selected Copilot backend runs the
+target agent with MCP tools, while `CopilotLLMJudge` evaluates the result
+without those tools. Judge or provider failures are recorded as failures, not
+vulnerabilities.
 
 ### Scenario Format
 
@@ -199,7 +221,7 @@ red-team execution should be a separately configured job with credentials and
   - `test_scenarios_integration.py`: Framework integration tests with synthetic results
   - `test_scenarios_live.py`: Live evaluation with real LLM (opt-in)
 - **`evals/eval_python/`**: Agent evaluation framework
-  - `copilot_backend.py`: Contains `BaseLLM` (abstract), `CopilotLLM` (Copilot SDK implementation)
+  - `copilot_backend.py`: Contains `BaseLLM`, `CopilotMCPBackEnd`, and `CopilotAgentBackend`
   - `copilot_llm.py`: Contains `CopilotLLMJudge` (DeepEval judge)
   - `trace.py`: Tool trace normalization
 - **`evals/golden/`**: Test scenarios and expected outcomes (scenarios.json)
@@ -207,22 +229,27 @@ red-team execution should be a separately configured job with credentials and
 ### Class Hierarchy
 ```python
 BaseLLM (abstract)
-├── CopilotLLM (Copilot SDK agent executor)
+├── CopilotMCPBackEnd (Copilot SDK agent executor with MCP tools)
+└── CopilotAgentBackend (Copilot SDK executor with repository custom agents)
 
 CopilotLLMJudge (DeepEval judge for metric evaluation)
 ```
 
 ### Backend Usage
 ```python
-from evals.eval_python import BaseLLM, CopilotLLM
+from evals.eval_python import BaseLLM, CopilotMCPBackEnd, CopilotAgentBackend
 
-# Agent backend
-backend = CopilotLLM()
+# MCP-only backend
+backend = CopilotMCPBackEnd()
 result = backend.run("user prompt")  # Returns dict with response, tool_calls, etc.
+
+# Hierarchical custom-agent backend
+backend = CopilotAgentBackend()
+result = backend.run("user prompt")  # Loads .github/agents/math_agent/*.agent.md
 
 # Judge backend
 from evals.eval_python import CopilotLLMJudge
-judge = CopilotLLMJudge(model="gpt-4o")
+judge = CopilotLLMJudge(model="gpt-5-mini")
 score = judge.generate(prompt, schema=MetricType)
 ```
 
@@ -234,14 +261,14 @@ score = judge.generate(prompt, schema=MetricType)
 ## Development Guidelines
 
 ### Naming Conventions
-- **Classes**: `BaseLLM`, `CopilotLLM`, `CopilotLLMJudge` (clear, no "Agent" or "Backend" suffixes)
+- **Classes**: `BaseLLM`, `CopilotMCPBackEnd`, `CopilotAgentBackend`, and `CopilotLLMJudge`
 - **Functions**: `run()` (sync), `run_async()` (async), `a_generate()` (async judge)
 - **Constants**: UPPERCASE (e.g., DEEPTEAM_VULNERABILITIES)
 
 ### Credential Management
 - Create `.env` from `.env.example` for local development
 - Set `COPILOT_GITHUB_TOKEN` with your GitHub PAT
-- Optional: `COPILOT_MODEL` (default: gpt-5), `COPILOT_JUDGE_MODEL` (default: gpt-4o)
+- Optional: `COPILOT_MODEL` (default: gpt-5-mini), `COPILOT_JUDGE_MODEL` (default: gpt-5-mini)
 - Loaded automatically via `python-dotenv` in conftest
 
 ### Code Style

@@ -13,13 +13,20 @@ Core utilities:
 Note: base.py has been merged into copilot_backend.py
 """
 
-from .copilot_backend import BaseLLM, CopilotLLM
+from .copilot_backend import (
+    BaseLLM,
+    CopilotAgentBackend,
+    CopilotMCPBackEnd,
+    create_copilot_backend,
+)
 from .copilot_llm import CopilotLLMJudge
 from .trace import normalize_tool_trace, to_deepeval_tool_calls
 
 __all__ = [
     'BaseLLM',
-    'CopilotLLM',
+    'CopilotAgentBackend',
+    'CopilotMCPBackEnd',
+    'create_copilot_backend',
     'CopilotLLMJudge',
     'normalize_tool_trace',
     'to_deepeval_tool_calls',

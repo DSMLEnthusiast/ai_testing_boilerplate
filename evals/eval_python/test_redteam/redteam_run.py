@@ -6,7 +6,7 @@ Usage:
         --output results-redteam.json \\
         --attack-types prompt_injection jailbreak \\
         --backend copilot \\
-        --model gpt-5
+        --model gpt-5-mini
 
 Red-team attack types:
     - prompt_injection: Direct system override attempts
@@ -76,7 +76,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default=os.environ.get("COPILOT_MODEL", "gpt-5"),
+        default=os.environ.get("COPILOT_MODEL", "gpt-5-mini"),
         help="Model to use (default varies by backend)",
     )
     parser.add_argument(
@@ -146,13 +146,13 @@ def main() -> None:
 
         # Initialize backend based on selection
         if args.backend == "copilot":
-            from evals.eval_python.copilot_backend import CopilotLLM
+            from evals.eval_python.copilot_backend import create_copilot_backend
             from evals.eval_python.copilot_llm import CopilotLLMJudge
             from .redteam_adapter import (
                 CopilotRedTeamEvaluator,
             )
 
-            backend = CopilotLLM(model=args.model)
+            backend = create_copilot_backend(model=args.model)
             judge = CopilotLLMJudge(
                 model=os.environ.get("COPILOT_JUDGE_MODEL", args.model)
             )

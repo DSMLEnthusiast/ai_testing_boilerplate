@@ -27,7 +27,7 @@ def extract_tools_from_mcp() -> dict[str, dict[str, Any]]:
     """
     try:
         # Add src to path for imports
-        repo_root = Path(__file__).resolve().parents[2]
+        repo_root = Path(__file__).resolve().parents[3]
         if str(repo_root / "src") not in sys.path:
             sys.path.insert(0, str(repo_root / "src"))
 

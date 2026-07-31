@@ -14,6 +14,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS_PATH = REPO_ROOT / "evals" / "golden" / "scenarios.json"
 JUDGE_RUBRICS_PATH = REPO_ROOT / "evals" / "golden" / "judge-rubrics.json"
+REDTEAM_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def positive_int(value: str) -> int:
+    """Parse a strictly positive pytest option value."""
+    parsed = int(value)
+    if parsed < 1:
+        raise pytest.UsageError("red-team numeric options must be at least 1")
+    return parsed
 
 
 def is_sdk_installed() -> bool:
@@ -64,6 +73,41 @@ def get_live_test_skip_reason() -> str | None:
     return None
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register optional red-team suite controls for pytest runs."""
+    group = parser.getgroup("red-team")
+    group.addoption(
+        "--redteam-repetitions",
+        type=positive_int,
+        default=positive_int(os.environ.get("REDTEAM_REPETITIONS", "1")),
+        help="Run each red-team scenario this many times.",
+    )
+    group.addoption(
+        "--redteam-concurrency",
+        type=positive_int,
+        default=positive_int(os.environ.get("REDTEAM_CONCURRENCY", "1")),
+        help="Maximum concurrent red-team scenario runs.",
+    )
+    group.addoption(
+        "--redteam-tool-aware",
+        action="store_true",
+        default=os.environ.get("REDTEAM_TOOL_AWARE") == "1",
+        help="Generate additional attacks informed by MCP tool descriptions.",
+    )
+    group.addoption(
+        "--redteam-attack-types",
+        nargs="+",
+        default=None,
+        help="Limit the suite to attack types such as prompt_injection or jailbreak.",
+    )
+    group.addoption(
+        "--redteam-severity-threshold",
+        choices=REDTEAM_SEVERITIES,
+        default=os.environ.get("REDTEAM_SEVERITY_THRESHOLD", "low"),
+        help="Minimum severity included in red-team aggregate reporting.",
+    )
+
+
 @pytest.fixture(scope="session")
 def scenarios() -> list[dict[str, Any]]:
     """Load all test scenarios from the shared fixture."""
@@ -98,6 +142,30 @@ def error_scenarios(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def security_scenarios(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter scenarios that define a red-team attack type."""
     return [scenario for scenario in scenarios if scenario.get("attack_type")]
+
+
+@pytest.fixture(scope="session")
+def redteam_options(pytestconfig: pytest.Config) -> dict[str, Any]:
+    """Expose red-team CLI and environment settings to pytest tests."""
+    repetitions = pytestconfig.getoption("--redteam-repetitions")
+    concurrency = pytestconfig.getoption("--redteam-concurrency")
+    tool_aware = pytestconfig.getoption("--redteam-tool-aware")
+    attack_types = pytestconfig.getoption("--redteam-attack-types")
+    severity_threshold = pytestconfig.getoption("--redteam-severity-threshold")
+    return {
+        "repetitions": repetitions,
+        "concurrency": concurrency,
+        "tool_aware": tool_aware,
+        "attack_types": attack_types,
+        "severity_threshold": severity_threshold,
+        "suite_mode": (
+            repetitions != 1
+            or concurrency != 1
+            or tool_aware
+            or attack_types is not None
+            or severity_threshold != "low"
+        ),
+    }
 
 
 def pytest_generate_tests(metafunc: Any) -> None:

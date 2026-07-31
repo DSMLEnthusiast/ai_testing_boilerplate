@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 def _approve_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
     return {"kind": "approved", "rules": []}
@@ -19,6 +21,69 @@ def _canonical_tool_name(name: Any) -> Any:
     if isinstance(name, str) and name.startswith("math-mcp-"):
         return name.removeprefix("math-mcp-")
     return name
+
+
+def _load_agent_configs(agents_directory: Path) -> list[dict[str, Any]]:
+    """Load Copilot custom-agent configurations from ``*.agent.md`` files."""
+    if not agents_directory.is_dir():
+        raise FileNotFoundError(f"Custom-agent directory does not exist: {agents_directory}")
+
+    agent_files = sorted(agents_directory.glob("*.agent.md"))
+    if not agent_files:
+        raise FileNotFoundError(f"No custom-agent files found in: {agents_directory}")
+
+    configs: list[dict[str, Any]] = []
+    for agent_file in agent_files:
+        lines = agent_file.read_text(encoding="utf-8").splitlines()
+        if not lines or lines[0].strip() != "---":
+            raise ValueError(f"Missing YAML frontmatter in custom-agent file: {agent_file}")
+
+        try:
+            closing_marker = lines.index("---", 1)
+        except ValueError as error:
+            raise ValueError(
+                f"Unterminated YAML frontmatter in custom-agent file: {agent_file}"
+            ) from error
+
+        metadata = yaml.safe_load("\n".join(lines[1:closing_marker]))
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Agent frontmatter must be a mapping: {agent_file}")
+
+        name = metadata.get("name")
+        description = metadata.get("description")
+        prompt = "\n".join(lines[closing_marker + 1 :]).strip()
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Agent frontmatter needs a non-empty name: {agent_file}")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(
+                f"Agent frontmatter needs a non-empty description: {agent_file}"
+            )
+        if not prompt:
+            raise ValueError(f"Agent file needs a non-empty prompt: {agent_file}")
+
+        tools = metadata.get("tools", [])
+        if tools is None:
+            tools = []
+        if not isinstance(tools, list) or not all(isinstance(tool, str) for tool in tools):
+            raise ValueError(f"Agent tools must be a list of strings: {agent_file}")
+
+        config: dict[str, Any] = {
+            "name": name,
+            "display_name": name,
+            "description": description,
+            "tools": tools,
+            "prompt": prompt,
+        }
+        model = metadata.get("model")
+        if model is not None:
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(f"Agent model must be a non-empty string: {agent_file}")
+            config["model"] = model
+        if isinstance(metadata.get("infer"), bool):
+            config["infer"] = metadata["infer"]
+        configs.append(config)
+
+    return configs
 
 
 class BaseLLM(ABC):
@@ -46,11 +111,32 @@ class BaseLLM(ABC):
         pass
 
 
-class CopilotLLM(BaseLLM):
+class CopilotMCPBackEnd(BaseLLM):
     """Run a prompt through Copilot SDK with the shared MCP server attached."""
 
     def __init__(self, **session_options: Any) -> None:
         self.session_options = session_options
+
+    def _prepare_prompt(self, prompt: str) -> str:
+        return prompt
+
+    def _build_session_config(self, root: Path) -> dict[str, Any]:
+        return {
+            "model": self.session_options.get(
+                "model", os.environ.get("COPILOT_MODEL", "gpt-5-mini")
+            ),
+            "on_permission_request": _approve_permission_request,
+            "mcp_servers": {
+                "math-mcp": {
+                    "type": "stdio",
+                    "tools": ["*"],
+                    "command": sys.executable,
+                    "args": ["-m", "mcp_app.server"],
+                    "cwd": str(root),
+                    "env": {"PYTHONPATH": str(root / "src")},
+                }
+            },
+        }
 
     def run(self, prompt: str) -> dict[str, Any]:
         """Synchronous wrapper for async evaluation."""
@@ -83,20 +169,7 @@ class CopilotLLM(BaseLLM):
         try:
             await client.start()
             client_started = True
-            session = await client.create_session({
-                "model": self.session_options.get("model", os.environ.get("COPILOT_MODEL", "gpt-5")),
-                "on_permission_request": _approve_permission_request,
-                "mcp_servers": {
-                    "math-mcp": {
-                        "type": "stdio",
-                        "tools": ["*"],
-                        "command": sys.executable,
-                        "args": ["-m", "mcp_app.server"],
-                        "cwd": str(root),
-                        "env": {"PYTHONPATH": str(root / "src")},
-                    }
-                },
-            })
+            session = await client.create_session(self._build_session_config(root))
 
             def handle_event(event: Any) -> None:
                 event_type = getattr(getattr(event, "type", None), "value", None)
@@ -122,7 +195,7 @@ class CopilotLLM(BaseLLM):
                     tool_call["result"] = getattr(result, "content", result)
 
             unsubscribe = session.on(handle_event)
-            response = await session.send_and_wait({"prompt": prompt})
+            response = await session.send_and_wait({"prompt": self._prepare_prompt(prompt)})
             unsubscribe()
 
             # Extract response content
@@ -165,6 +238,48 @@ class CopilotLLM(BaseLLM):
             "usage": usage,
             "latency_ms": latency_ms,
         }
+
+
+class CopilotAgentBackend(CopilotMCPBackEnd):
+    """Run prompts with repository custom agents and their MCP tools loaded."""
+
+    def __init__(
+        self,
+        agents_directory: str | Path | None = None,
+        **session_options: Any,
+    ) -> None:
+        super().__init__(**session_options)
+        self.agents_directory = (
+            Path(agents_directory) if agents_directory is not None else None
+        )
+        self.orchestrator_name = "math-orchestrator"
+
+    def _build_session_config(self, root: Path) -> dict[str, Any]:
+        config = super()._build_session_config(root)
+        agents_directory = self.agents_directory or root / ".github" / "agents" / "math_agent"
+        custom_agents = _load_agent_configs(agents_directory)
+        if self.orchestrator_name not in {agent["name"] for agent in custom_agents}:
+            raise ValueError(
+                f"Orchestrator agent {self.orchestrator_name!r} was not found in {agents_directory}"
+            )
+        config["custom_agents"] = custom_agents
+        return config
+
+    def _prepare_prompt(self, prompt: str) -> str:
+        return f"@{self.orchestrator_name}\n{prompt}"
+
+
+def create_copilot_backend(**session_options: Any) -> CopilotMCPBackEnd:
+    """Create the live-test backend selected by ``COPILOT_BACKEND``."""
+    backend_name = os.environ.get("COPILOT_BACKEND", "mcp").strip().lower()
+    if backend_name == "mcp":
+        return CopilotMCPBackEnd(**session_options)
+    if backend_name == "agent":
+        return CopilotAgentBackend(**session_options)
+    raise ValueError(
+        "COPILOT_BACKEND must be 'mcp' or 'agent', "
+        f"not {backend_name!r}"
+    )
 
 
 async def run_batch_async(

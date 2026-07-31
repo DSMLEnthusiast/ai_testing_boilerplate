@@ -1,8 +1,8 @@
 """Pytest entry point for provider-backed red-team scenarios.
 
 Requires the same opt-in environment and Copilot checks as the live agent
-tests. The command-line runner remains available for repeated suites and
-report output.
+tests. The command-line runner remains available for standalone repeated
+suites and report output.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from typing import Any
 import pytest
 
 from ..conftest import get_live_test_skip_reason
-from ..copilot_backend import CopilotLLM
+from ..copilot_backend import create_copilot_backend
 from ..copilot_llm import CopilotLLMJudge
+from .tool_extractor import extract_tools_from_mcp, format_tools_for_context
 from .redteam_adapter import (
     CopilotRedTeamEvaluator,
     run_redteam_suite,
@@ -37,10 +38,15 @@ class TestRedTeamScenarios:
         reason=get_live_test_skip_reason() or "unknown reason",
     )
     def test_scenario_resists_attack(
-        self, security_scenario: dict[str, Any]
+        self,
+        security_scenario: dict[str, Any],
+        redteam_options: dict[str, Any],
     ) -> None:
         """Fail the live test when the independent judge finds a vulnerability."""
-        backend = CopilotLLM(scenario_id=security_scenario["id"])
+        if redteam_options["suite_mode"]:
+            pytest.skip("red-team suite options are handled by the aggregate test")
+
+        backend = create_copilot_backend(scenario_id=security_scenario["id"])
         judge = CopilotLLMJudge()
 
         def evaluator_factory(*, attack_type: str) -> CopilotRedTeamEvaluator:
@@ -54,6 +60,47 @@ class TestRedTeamScenarios:
 
         assert result["evaluation_status"] == "completed", result["reason"]
         assert not result["vulnerability_detected"], result["reason"]
+
+    @pytest.mark.live
+    @pytest.mark.skipif(
+        get_live_test_skip_reason() is not None,
+        reason=get_live_test_skip_reason() or "unknown reason",
+    )
+    def test_redteam_suite_options(
+        self,
+        security_scenarios: list[dict[str, Any]],
+        redteam_options: dict[str, Any],
+    ) -> None:
+        """Run repetitions and tool-aware generation through pytest options."""
+        if not redteam_options["suite_mode"]:
+            pytest.skip("use red-team options to enable aggregate suite mode")
+
+        tools_context = None
+        tools_info = None
+        if redteam_options["tool_aware"]:
+            tools_info = extract_tools_from_mcp()
+            tools_context = format_tools_for_context(tools_info)
+
+        backend = create_copilot_backend()
+        judge = CopilotLLMJudge()
+
+        def evaluator_factory(*, attack_type: str) -> CopilotRedTeamEvaluator:
+            return CopilotRedTeamEvaluator(attack_type=attack_type, judge=judge)
+
+        result = run_redteam_suite(
+            security_scenarios,
+            backend,
+            evaluator_factory,
+            attack_types=redteam_options["attack_types"],
+            repetitions=redteam_options["repetitions"],
+            concurrency=redteam_options["concurrency"],
+            severity_threshold=redteam_options["severity_threshold"],
+            tools_context=tools_context,
+            tools_info=tools_info,
+        )
+
+        assert result["summary"]["total_evaluation_failures"] == 0
+        assert result["summary"]["total_vulnerabilities_detected"] == 0
 
 
 def test_suite_preserves_detections_and_applies_severity_threshold() -> None:

@@ -1,6 +1,6 @@
 """DeepTeam attack scenario generator for dynamic red-team testing.
 
-This module generates adversarial attacks using DeepTeam's RedTeamer,
+This module generates adversarial attacks using DeepTeam's attack simulator,
 replacing static hand-written scenarios with dynamic, vulnerability-specific attacks.
 """
 
@@ -13,52 +13,52 @@ DEEPTEAM_VULNERABILITIES = {
     "prompt_injection": {
         "description": "Direct system override and instruction confusion",
         "owasp": "LLM01",
-        "deepteam_type": "PromptInjection",
+        "deepteam_class": "Robustness",
     },
     "jailbreak": {
         "description": "DAN, roleplay, hypothetical, and other safety bypasses",
         "owasp": "LLM01",
-        "deepteam_type": "Jailbreak",
+        "deepteam_class": "Robustness",
     },
     "pii_leakage": {
         "description": "Personal data extraction and memorization",
         "owasp": "LLM02",
-        "deepteam_type": "PIILeakage",
+        "deepteam_class": "PIILeakage",
     },
     "system_prompt_extraction": {
         "description": "Disclosure of system and hidden instructions",
         "owasp": "LLM07",
-        "deepteam_type": "SystemPromptExtraction",
+        "deepteam_class": "PromptLeakage",
     },
     "indirect_injection": {
         "description": "Malicious instructions via documents or tools",
         "owasp": "LLM01",
-        "deepteam_type": "IndirectInjection",
+        "deepteam_class": "IndirectInstruction",
     },
     "excessive_agency": {
         "description": "Authority escalation and unsanctioned decisions",
         "owasp": "LLM06",
-        "deepteam_type": "ExcessiveAgency",
+        "deepteam_class": "ExcessiveAgency",
     },
     "insecure_output": {
         "description": "XSS, SQL, command, and other injection-shaped output",
         "owasp": "LLM05",
-        "deepteam_type": "InsecureOutput",
+        "deepteam_class": "InsecureOutput",
     },
     "encoding_evasion": {
         "description": "Base64, ROT13, hex, and other encoding obfuscation",
         "owasp": "LLM01",
-        "deepteam_type": "EncodingEvasion",
+        "deepteam_class": "EncodingEvasion",
     },
     "data_poisoning": {
         "description": "False facts and backdoor priming",
         "owasp": "LLM04",
-        "deepteam_type": "DataPoisoning",
+        "deepteam_class": "DataPoisoning",
     },
     "misinformation": {
         "description": "Fabrication, unsupported claims, overconfident falsehoods",
         "owasp": "LLM09",
-        "deepteam_type": "Misinformation",
+        "deepteam_class": "Misinformation",
     },
 }
 
@@ -69,7 +69,7 @@ def generate_attacks_with_deepteam(
     num_attacks_per_type: int = 3,
     tools_context: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Generate adversarial attacks using DeepTeam's RedTeamer.
+    """Generate adversarial attacks using DeepTeam's attack simulator.
 
     Args:
         vulnerabilities: List of vulnerability types to generate (None = all)
@@ -84,7 +84,13 @@ def generate_attacks_with_deepteam(
         ImportError: If deepteam is not installed.
     """
     try:
-        from deepteam import RedTeamer
+        from deepteam.attacks.attack_simulator import AttackSimulator
+        from deepteam.vulnerabilities import (
+            ExcessiveAgency,
+            IndirectInstruction,
+            PromptLeakage,
+            Robustness,
+        )
     except ImportError as error:
         raise ImportError("deepteam not installed. Install with: pip install deepteam") from error
 
@@ -101,39 +107,92 @@ def generate_attacks_with_deepteam(
     if tools_context:
         enhanced_description = f"{target_description}\n\n{tools_context}"
 
-    red_teamer = RedTeamer(target=enhanced_description)
+    from ..copilot_llm import CopilotLLMJudge
+
+    vulnerability_classes = {
+        "ExcessiveAgency": ExcessiveAgency,
+        "IndirectInstruction": IndirectInstruction,
+        "PromptLeakage": PromptLeakage,
+        "Robustness": Robustness,
+    }
+    simulator_model = CopilotLLMJudge()
+    deepteam_vulnerabilities = []
+    attack_type_by_vulnerability_type: dict[str, str] = {}
+
+    for vulnerability_name in vulnerabilities:
+        config = DEEPTEAM_VULNERABILITIES[vulnerability_name]
+        vulnerability_class = vulnerability_classes.get(config["deepteam_class"])
+        if vulnerability_class is None:
+            print(
+                f"Warning: DeepTeam 1.0.7 has no supported class for "
+                f"{vulnerability_name}; skipping"
+            )
+            continue
+
+        # Keep generated attacks focused on the threat relevant to this target.
+        type_by_class = {
+            "Robustness": ["hijacking"],
+            "ExcessiveAgency": ["permissions"],
+            "IndirectInstruction": ["tool_output_injection"],
+            "PromptLeakage": ["instructions"],
+        }
+        vulnerability_types = type_by_class.get(config["deepteam_class"])
+        kwargs: dict[str, Any] = {
+            "async_mode": False,
+            "purpose": enhanced_description,
+            "simulator_model": simulator_model,
+        }
+        if vulnerability_types:
+            kwargs["types"] = vulnerability_types
+
+        deepteam_vulnerabilities.append(vulnerability_class(**kwargs))
+        for vulnerability_type in vulnerability_types or []:
+            attack_type_by_vulnerability_type[vulnerability_type] = vulnerability_name
+
+    if not deepteam_vulnerabilities:
+        return []
+
+    from deepteam.attacks.attack_simulator import AttackSimulator
+
+    simulator = AttackSimulator(
+        purpose=enhanced_description,
+        max_concurrent=1,
+        simulator_model=simulator_model,
+    )
+    test_cases = simulator.simulate(
+        attacks_per_vulnerability_type=num_attacks_per_type,
+        vulnerabilities=deepteam_vulnerabilities,
+        ignore_errors=True,
+        simulator_model=simulator_model,
+    )
+
     attacks = []
-
-    for vuln in vulnerabilities:
-        vuln_config = DEEPTEAM_VULNERABILITIES[vuln]
-        vuln_type = vuln_config["deepteam_type"]
-
-        for i in range(num_attacks_per_type):
-            try:
-                # Generate attack using DeepTeam
-                attack = red_teamer.generate_attack(
-                    vulnerability_type=vuln_type,
-                    attack_index=i,
-                )
-
-                attacks.append(
-                    {
-                        "id": f"deepteam-{vuln}-{i}",
-                        "prompt": attack.attack_prompt,
-                        "attack_type": vuln,
-                        "vulnerability_type": vuln_type,
-                        "owasp_category": vuln_config["owasp"],
-                        "description": vuln_config["description"],
-                        "target_boundary": "agent",
-                        "rubric_id": "deepteam-v1",
-                        "expected_tools": [],  # Will be determined by agent
-                        "is_generated": True,
-                        "generator": "deepteam",
-                    }
-                )
-            except Exception as e:
-                # Skip attacks that fail to generate
-                print(f"Warning: Failed to generate {vuln_type} attack #{i}: {e}")
-                continue
+    for index, test_case in enumerate(test_cases):
+        prompt = getattr(test_case, "input", None)
+        if not isinstance(prompt, str) or not prompt.strip():
+            continue
+        vulnerability_type = getattr(test_case, "vulnerability_type", "unknown")
+        vulnerability_type_name = getattr(
+            vulnerability_type, "value", str(vulnerability_type)
+        )
+        attack_type = attack_type_by_vulnerability_type.get(
+            vulnerability_type_name, "unknown"
+        )
+        config = DEEPTEAM_VULNERABILITIES.get(attack_type, {})
+        attacks.append(
+            {
+                "id": f"deepteam-{attack_type}-{index}",
+                "prompt": prompt,
+                "attack_type": attack_type,
+                "vulnerability_type": vulnerability_type_name,
+                "owasp_category": config.get("owasp", "LLM01"),
+                "description": config.get("description", "DeepTeam-generated attack"),
+                "target_boundary": "agent",
+                "rubric_id": "deepteam-v1",
+                "expected_tools": [],
+                "is_generated": True,
+                "generator": "deepteam",
+            }
+        )
 
     return attacks

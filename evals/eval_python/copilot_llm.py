@@ -33,7 +33,7 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
         timeout: float = 60.0,
     ) -> None:
         self.model_name = model or os.environ.get("COPILOT_JUDGE_MODEL") or os.environ.get(
-            "COPILOT_MODEL", "gpt-4o"
+            "COPILOT_MODEL", "gpt-5-mini"
         )
         self.timeout = timeout
 
