@@ -11,6 +11,28 @@ class ToolTraceError(ValueError):
     """Raised when an agent trace cannot provide authoritative tool evidence."""
 
 
+class AgentRunError(RuntimeError):
+    """Raised when a provider-backed agent run did not complete successfully."""
+
+
+def require_successful_run(agent_result: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Reject failed provider runs before their output reaches an evaluator."""
+    failure_category = agent_result.get("failure_category")
+    if failure_category:
+        detail = agent_result.get("provider_error") or "no provider error detail"
+        raise AgentRunError(f"Agent run failed ({failure_category}): {detail}")
+    return agent_result
+
+
+def classify_tool_trace(
+    tool_calls: list[dict[str, Any]], unmatched_event_ids: list[str]
+) -> str:
+    """Classify whether every observed tool event has a matching result."""
+    if unmatched_event_ids or any("result" not in call for call in tool_calls):
+        return "partial"
+    return "complete"
+
+
 def normalize_tool_trace(agent_trace: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return canonical tool-call evidence from a complete agent trace.
 

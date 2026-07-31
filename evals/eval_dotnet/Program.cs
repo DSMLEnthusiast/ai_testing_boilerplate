@@ -9,6 +9,7 @@ public sealed record EvaluationResult(
     string ScenarioId,
     string ModelProvider,
     string Response,
+    IReadOnlyList<Dictionary<string, object?>> ToolCalls,
     bool Passed,
     string? FailureCategory,
     double LatencyMilliseconds,
@@ -41,6 +42,7 @@ public sealed class MeaiEvaluator(IChatClient chatClient)
             ScenarioId: scenarioId,
             ModelProvider: modelProvider,
             Response: text,
+            ToolCalls: [],
             Passed: false, // Placeholder; real pass/fail logic depends on scenario type
             FailureCategory: null,
             LatencyMilliseconds: elapsed,
@@ -96,8 +98,10 @@ internal static class Program
                     Console.Error.WriteLine($"ERROR: {scenario.Id}: {ex.Message}");
                     results.Add(new Dictionary<string, object>
                     {
+                        ["schema_version"] = "1.0",
                         ["run_id"] = $"meai-{scenario.Id}-{repetition}",
                         ["scenario_id"] = scenario.Id,
+                        ["agent_runtime"] = "copilot-sdk-dotnet",
                         ["model_provider"] = provider,
                         ["repetition_index"] = repetition,
                         ["passed"] = false,
@@ -122,10 +126,23 @@ internal static class Program
     {
         return new Dictionary<string, object>
         {
+            ["schema_version"] = "1.0",
             ["run_id"] = $"meai-{scenario.Id}-{repetitionIndex}",
             ["scenario_id"] = result.ScenarioId,
+            ["agent_runtime"] = "copilot-sdk-dotnet",
             ["model_provider"] = provider,
             ["response"] = result.Response,
+            ["tool_calls"] = result.ToolCalls,
+            ["tool_results"] = result.ToolCalls
+                .Where(call => call.ContainsKey("result"))
+                .Select(call => call["result"])
+                .ToList(),
+            ["trace_status"] = result.ToolCalls.All(call =>
+                call.ContainsKey("name") &&
+                call.ContainsKey("arguments") &&
+                call.ContainsKey("result"))
+                ? "complete"
+                : "partial",
             ["repetition_index"] = repetitionIndex,
             ["passed"] = result.Passed,
             ["failure_category"] = result.FailureCategory ?? "none",

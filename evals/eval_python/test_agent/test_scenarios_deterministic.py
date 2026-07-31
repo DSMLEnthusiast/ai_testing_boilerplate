@@ -7,7 +7,7 @@ This suite:
 4. Handles error scenarios explicitly
 
 Run with:
-    pytest evals/deepeval_v2/test_scenarios_deterministic.py -v
+    pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
 """
 
 from __future__ import annotations

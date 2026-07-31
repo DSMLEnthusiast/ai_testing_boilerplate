@@ -7,7 +7,7 @@ This suite validates:
 4. Metric-only scenarios are identified and skipped appropriately
 
 Run with:
-    pytest evals/deepeval_v2/test_scenarios_integration.py -v
+    pytest evals/eval_python/test_agent/test_scenarios_integration.py -v
 """
 
 from __future__ import annotations

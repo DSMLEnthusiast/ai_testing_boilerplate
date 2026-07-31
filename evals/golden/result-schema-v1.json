@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:math-mcp-eval:result-schema:1.0",
+  "title": "Math MCP evaluation result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "agent_runtime",
+    "model_provider",
+    "failure_category",
+    "latency_ms"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "run_id": {"type": "string"},
+    "scenario_id": {"type": ["string", "null"]},
+    "agent_runtime": {"type": "string"},
+    "model_provider": {"type": "string"},
+    "repetition_index": {"type": "integer", "minimum": 0},
+    "response": {"type": "string"},
+    "tool_calls": {"type": "array"},
+    "tool_results": {"type": "array"},
+    "trace_status": {
+      "enum": ["complete", "partial", "unavailable", "provider_error"]
+    },
+    "failure_category": {"type": ["string", "null"]},
+    "latency_ms": {"type": "number", "minimum": 0},
+    "usage": {"type": "object"},
+    "rubric_id": {"type": "string"}
+  },
+  "additionalProperties": true
+}

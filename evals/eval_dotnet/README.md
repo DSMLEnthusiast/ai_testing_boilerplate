@@ -127,8 +127,8 @@ This adapter uses:
 - Normalized result schema matching the deterministic Python runner
 
 Results can be compared with:
-- Model-free deterministic evaluations via `python evals/run_scenarios.py`
-- DeepEval results from `evals/deepeval/`
+- Deterministic evaluations from `evals/eval_python/test_agent/`
+- DeepEval results from `evals/eval_python/`
 
 ## Development
 

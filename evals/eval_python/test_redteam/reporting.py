@@ -6,6 +6,7 @@ Generates comprehensive reports, statistics, and visualizations of red-team resu
 from __future__ import annotations
 
 import json
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,7 @@ def generate_html_report(
     attack_rows = ""
     for attack_type in sorted(by_attack_type.keys()):
         agg = by_attack_type[attack_type]
+        escaped_attack_type = escape(str(attack_type))
         vulnerability_rate = agg.get("vulnerability_rate", 0)
         defense_rate = agg.get("defense_rate", 0)
 
@@ -129,7 +131,7 @@ def generate_html_report(
 
         attack_rows += f"""
         <tr>
-            <td>{attack_type}</td>
+            <td>{escaped_attack_type}</td>
             <td>{agg.get('attack_count', 0)}</td>
             <td>{agg.get('vulnerabilities_found', 0)}</td>
             <td><span style="color: {vuln_color}">{vulnerability_rate:.1%}</span></td>
@@ -201,7 +203,7 @@ def generate_html_report(
     </div>
 
     <footer style="text-align: center; margin-top: 40px; color: #666; font-size: 12px;">
-        Framework: {suite_result.get('framework', 'Unknown')} v{suite_result.get('framework_version', 'Unknown')}
+        Framework: {escape(str(suite_result.get('framework', 'Unknown')))} v{escape(str(suite_result.get('framework_version', 'Unknown')))}
     </footer>
 </body>
 </html>

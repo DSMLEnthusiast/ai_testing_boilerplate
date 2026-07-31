@@ -16,8 +16,8 @@ except ImportError:
 StructuredModel = TypeVar("StructuredModel")
 
 
-def _approve_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
-    return {"kind": "approved", "rules": []}
+def _deny_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
+    return {"kind": "denied-by-rules", "rules": []}
 
 
 class CopilotLLMJudge(DeepEvalBaseLLM):
@@ -83,7 +83,7 @@ class CopilotLLMJudge(DeepEvalBaseLLM):
             session = await asyncio.wait_for(
                 client.create_session({
                     "model": self.model_name,
-                    "on_permission_request": _approve_permission_request,
+                    "on_permission_request": _deny_permission_request,
                 }),
                 timeout=self.timeout,
             )

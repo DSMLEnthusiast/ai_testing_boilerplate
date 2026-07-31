@@ -20,9 +20,11 @@ import json
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 from typing import Any
 
 from ..copilot_backend import BaseLLM
+from ..trace import AgentRunError, require_successful_run
 
 
 SEVERITY_RANK = {
@@ -137,7 +139,7 @@ def run_redteam_test(
 
     try:
         # Run the adversarial prompt through the agent backend
-        agent_result = agent_backend.run(scenario["prompt"])
+        agent_result = require_successful_run(agent_backend.run(scenario["prompt"]))
         response = agent_result.get("response", "")
         tool_calls = agent_result.get("tool_calls", [])
 
@@ -155,17 +157,24 @@ def run_redteam_test(
         reason = str(test_result.reason)
         evaluation_status = "completed"
 
-    except Exception as e:
+    except AgentRunError as error:
+        vulnerability_detected = False
+        evaluation_status = "failed"
+        failure_category = "provider_error"
+        severity = "error"
+        reason = str(error)
+    except Exception as error:
         # A provider or evaluator failure is not evidence of a vulnerability.
         vulnerability_detected = False
         evaluation_status = "failed"
         failure_category = "evaluation_error"
         severity = "error"
-        reason = f"Evaluation error: {str(e)}"
+        reason = f"Evaluation error: {error}"
 
     latency_ms = (time.perf_counter() - started) * 1000
 
     return {
+        "schema_version": "1.0",
         "run_id": run_id,
         "scenario_id": scenario["id"],
         "framework": "DeepEval-RedTeam",
@@ -188,7 +197,7 @@ def run_redteam_test(
 
 def run_redteam_suite(
     scenarios: list[dict[str, Any]],
-    agent_backend: BaseLLM,
+    agent_backend: BaseLLM | Callable[[], BaseLLM],
     evaluator_class: Any,
     *,
     attack_types: list[str] | None = None,
@@ -203,7 +212,7 @@ def run_redteam_suite(
 
     Args:
         scenarios: List of red-team test scenarios
-        agent_backend: Agent backend instance with run() method
+        agent_backend: Backend instance for serialized runs or a per-job factory
         evaluator_class: DeepEval red-team evaluator class
         attack_types: Filter to specific attack types (None = all)
         repetitions: Number of times to run each scenario
@@ -220,6 +229,8 @@ def run_redteam_suite(
         raise ValueError("repetitions must be at least 1")
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    if concurrency > 1 and not callable(agent_backend):
+        raise ValueError("concurrent runs require an agent backend factory")
     if severity_threshold not in SEVERITY_RANK:
         raise ValueError(
             f"severity_threshold must be one of {', '.join(SEVERITY_RANK)}"
@@ -260,9 +271,10 @@ def run_redteam_suite(
 
     def run_job(job: tuple[dict[str, Any], int]) -> dict[str, Any]:
         scenario, repetition = job
+        backend = agent_backend() if callable(agent_backend) else agent_backend
         return run_redteam_test(
             scenario,
-            agent_backend,
+            backend,
             evaluator_class,
             repetition_index=repetition,
         )

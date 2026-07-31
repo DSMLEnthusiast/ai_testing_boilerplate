@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using GitHub.Copilot;
 
 namespace MathMcp.MeaiEval;
@@ -16,7 +18,7 @@ public sealed class CopilotSdkAgent
     {
         var root = FindRepositoryRoot();
         var started = Stopwatch.GetTimestamp();
-        var toolCalls = new List<string>();
+        var toolCalls = new Dictionary<string, Dictionary<string, object?>>();
         var passed = false;
 
         try
@@ -45,6 +47,37 @@ public sealed class CopilotSdkAgent
                 }
             });
 
+            using var subscription = session.On<SessionEvent>(sessionEvent =>
+            {
+                switch (sessionEvent)
+                {
+                    case ToolExecutionStartEvent startedEvent:
+                        var startedData = startedEvent.Data;
+                        toolCalls[startedData.ToolCallId] = new Dictionary<string, object?>
+                        {
+                            ["event_id"] = startedData.ToolCallId,
+                            ["name"] = startedData.McpToolName ?? startedData.ToolName,
+                            ["arguments"] = startedData.Arguments,
+                            ["mcp_server"] = startedData.McpServerName
+                        };
+                        break;
+                    case ToolExecutionCompleteEvent completedEvent:
+                        var completedData = completedEvent.Data;
+                        if (!toolCalls.TryGetValue(completedData.ToolCallId, out var toolCall))
+                        {
+                            toolCall = new Dictionary<string, object?>
+                            {
+                                ["event_id"] = completedData.ToolCallId
+                            };
+                            toolCalls[completedData.ToolCallId] = toolCall;
+                        }
+                        toolCall["result"] = completedData.Result;
+                        toolCall["success"] = completedData.Success;
+                        toolCall["error"] = completedData.Error?.Message;
+                        break;
+                }
+            });
+
             var response = await session.SendAndWaitAsync(new MessageOptions { Prompt = scenario.Prompt });
             var text = response?.Data.Content ?? string.Empty;
 
@@ -57,6 +90,7 @@ public sealed class CopilotSdkAgent
                 ScenarioId: scenario.Id,
                 ModelProvider: "github-copilot-sdk",
                 Response: text,
+                ToolCalls: toolCalls.Values.ToList(),
                 Passed: passed,
                 FailureCategory: failureCategory,
                 LatencyMilliseconds: elapsed,
@@ -70,6 +104,7 @@ public sealed class CopilotSdkAgent
                 ScenarioId: scenario.Id,
                 ModelProvider: "github-copilot-sdk",
                 Response: $"Error: {ex.Message}",
+                ToolCalls: toolCalls.Values.ToList(),
                 Passed: false,
                 FailureCategory: "provider_error",
                 LatencyMilliseconds: elapsed,
@@ -139,8 +174,26 @@ internal static class ScenarioAssertions
 
     private static bool ContainsNumber(string response, string expected)
     {
-        var normalized = expected.TrimEnd('0').TrimEnd('.');
-        return response.Contains(expected, StringComparison.Ordinal) ||
-               (normalized.Length > 0 && response.Contains(normalized, StringComparison.Ordinal));
+        if (!double.TryParse(expected, NumberStyles.Float, CultureInfo.InvariantCulture, out var expectedValue))
+        {
+            return false;
+        }
+
+        const string numberPattern = @"(?<![\w.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])";
+        foreach (Match match in Regex.Matches(response, numberPattern))
+        {
+            if (!double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var actualValue))
+            {
+                continue;
+            }
+
+            var tolerance = 1e-9 * Math.Max(1.0, Math.Max(Math.Abs(expectedValue), Math.Abs(actualValue)));
+            if (Math.Abs(expectedValue - actualValue) <= tolerance)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

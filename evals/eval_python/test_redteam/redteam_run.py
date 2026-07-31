@@ -152,22 +152,22 @@ def main() -> None:
                 CopilotRedTeamEvaluator,
             )
 
-            backend = create_copilot_backend(model=args.model)
-            judge = CopilotLLMJudge(
-                model=os.environ.get("COPILOT_JUDGE_MODEL", args.model)
-            )
+            def backend_factory():
+                return create_copilot_backend(model=args.model)
 
             def evaluator_class(*, attack_type: str) -> CopilotRedTeamEvaluator:
                 return CopilotRedTeamEvaluator(
                     attack_type=attack_type,
-                    judge=judge,
+                    judge=CopilotLLMJudge(
+                        model=os.environ.get("COPILOT_JUDGE_MODEL", args.model)
+                    ),
                 )
         else:
             raise ValueError(f"Unknown backend: {args.backend}")
 
         suite_result = run_redteam_suite(
             redteam_scenarios,
-            backend,
+            backend_factory,
             evaluator_class,
             attack_types=args.attack_types,
             repetitions=args.repetitions,

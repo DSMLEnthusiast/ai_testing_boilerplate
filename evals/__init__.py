@@ -1,19 +1,8 @@
-"""Framework-specific evaluation entry points.
+"""Shared Python and .NET evaluation entry points.
 
-The evaluation infrastructure has been reorganized:
-
-Shared/Core infrastructure:
-  - src/mcp_app/contracts.py          → Normalized run and judge verdict schemas
-  - tests/model_free/scenario_runner.py → Deterministic scenario execution
-  - tests/model_free/run.py           → Model-free CLI runner
-
-Framework adapters:
-  - evals/deepeval/                   → DeepEval evaluation adapter (Python)
-  - evals/meaieval/                   → MEAI/Copilot SDK adapter (.NET)
-  - evals/agenteval/                  → AgentEval adapter (if supported)
-
-Legacy files in evals/ have been moved to their proper locations above.
-See docs/plan.md for the full architecture.
+Deterministic and provider-backed Python evaluations live in
+``evals/eval_python``. The .NET Copilot SDK example lives in
+``evals/eval_dotnet``, and both use fixtures from ``evals/golden``.
 """
 
 from pathlib import Path

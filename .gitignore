@@ -8,8 +8,9 @@ results.json
 *.html
 # DeepEval artifacts
 .deepeval/
-# Documents
-docs/
+# Documents are local unless explicitly selected for version control.
+docs/*
+!docs/repository_improvement_plan.md
 # Virtual Environments
 .venv/
 # IDE

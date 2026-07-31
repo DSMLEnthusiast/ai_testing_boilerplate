@@ -9,8 +9,11 @@ import pytest
 from ..copilot_backend import (
     CopilotAgentBackend,
     CopilotMCPBackEnd,
+    _handle_math_permission_request,
     create_copilot_backend,
 )
+from ..copilot_llm import _deny_permission_request
+from ..trace import AgentRunError, classify_tool_trace, require_successful_run
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -75,3 +78,29 @@ def test_agent_backend_rejects_missing_orchestrator(tmp_path: Path) -> None:
         CopilotAgentBackend(agents_directory=tmp_path)._build_session_config(
             REPOSITORY_ROOT
         )
+
+
+def test_trace_is_partial_when_tool_events_do_not_match() -> None:
+    assert classify_tool_trace([{"event_id": "pending"}], []) == "partial"
+    assert classify_tool_trace([], ["orphaned"]) == "partial"
+    assert classify_tool_trace([{"event_id": "done", "result": 4}], []) == "complete"
+
+
+def test_failed_agent_run_is_rejected_before_evaluation() -> None:
+    result = {
+        "failure_category": "provider_error",
+        "provider_error": "session failed",
+        "response": "",
+    }
+
+    with pytest.raises(AgentRunError, match="session failed"):
+        require_successful_run(result)
+
+
+def test_permission_handlers_only_allow_math_mcp_requests() -> None:
+    context: dict[str, str] = {}
+
+    assert _handle_math_permission_request({"kind": "mcp"}, context)["kind"] == "approved"
+    for kind in ("shell", "write", "read", "url", "unknown"):
+        assert _handle_math_permission_request({"kind": kind}, context)["kind"] == "denied-by-rules"
+    assert _deny_permission_request({"kind": "mcp"}, context)["kind"] == "denied-by-rules"

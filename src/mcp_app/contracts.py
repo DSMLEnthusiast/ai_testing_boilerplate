@@ -8,12 +8,18 @@ from typing import Any
 class NormalizedRun:
     run_id: str
     scenario_id: str
+    schema_version: str = "1.0"
     agent_runtime: str = "model-free"
     model_provider: str = "deterministic"
     seed: int | None = None
     repetition_index: int = 0
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
+    response: str = ""
+    trace_status: str = "complete"
+    failure_category: str | None = None
+    latency_ms: float = 0.0
+    usage: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

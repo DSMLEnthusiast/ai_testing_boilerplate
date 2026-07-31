@@ -13,13 +13,9 @@ Single-track deterministic MCP tool-calling testbed with optional DeepEval, MEAI
 ## Deterministic checks (no API required)
 
 ```powershell
-python -m pip install -r requirements.txt
-$env:PYTHONPATH = "src"
+python -m pip install -e ".[dev]"
 # Run deterministic scenario tests
-pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
-
-# Or run model-free scenario runner
-python evals/run_scenarios.py --repetitions 2 --output results.json
+python -m pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
 ```
 
 No API key or network access is required. The server is available over stdio:
@@ -34,7 +30,7 @@ python -m mcp_app.server
 Install the desired optional dependencies:
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev,live]"
 ```
 
 The Copilot SDK backend is intentionally opt-in. Set `RUN_LLM_EVALS=1` before

@@ -12,9 +12,15 @@ from typing import Any
 
 import yaml
 
+from .trace import classify_tool_trace
 
-def _approve_permission_request(_request: Any, _context: dict[str, str]) -> dict[str, Any]:
-    return {"kind": "approved", "rules": []}
+
+def _handle_math_permission_request(
+    request: Any, _context: dict[str, str]
+) -> dict[str, Any]:
+    if isinstance(request, dict) and request.get("kind") == "mcp":
+        return {"kind": "approved", "rules": []}
+    return {"kind": "denied-by-rules", "rules": []}
 
 
 def _canonical_tool_name(name: Any) -> Any:
@@ -125,7 +131,7 @@ class CopilotMCPBackEnd(BaseLLM):
             "model": self.session_options.get(
                 "model", os.environ.get("COPILOT_MODEL", "gpt-5-mini")
             ),
-            "on_permission_request": _approve_permission_request,
+            "on_permission_request": _handle_math_permission_request,
             "mcp_servers": {
                 "math-mcp": {
                     "type": "stdio",
@@ -157,9 +163,11 @@ class CopilotMCPBackEnd(BaseLLM):
         root = Path(__file__).resolve().parents[2]
         client = CopilotClient()
         client_started = False
+        unsubscribe = None
         tool_calls = []
         tool_calls_by_id: dict[str, dict[str, Any]] = {}
         tool_results = []
+        unmatched_event_ids: list[str] = []
         response_text = ""
         usage = {}
         trace_status = "unavailable"
@@ -190,13 +198,13 @@ class CopilotMCPBackEnd(BaseLLM):
                         return
                     tool_call = tool_calls_by_id.get(tool_call_id)
                     if tool_call is None:
+                        unmatched_event_ids.append(tool_call_id)
                         return
                     result = getattr(data, "result", None)
                     tool_call["result"] = getattr(result, "content", result)
 
             unsubscribe = session.on(handle_event)
             response = await session.send_and_wait({"prompt": self._prepare_prompt(prompt)})
-            unsubscribe()
 
             # Extract response content
             if hasattr(response.data, "content"):
@@ -208,7 +216,7 @@ class CopilotMCPBackEnd(BaseLLM):
 
             tool_calls = list(tool_calls_by_id.values())
             tool_results = [call.get("result") for call in tool_calls if "result" in call]
-            trace_status = "complete"
+            trace_status = classify_tool_trace(tool_calls, unmatched_event_ids)
 
             # Extract usage if available
             if hasattr(response, "usage"):
@@ -222,17 +230,37 @@ class CopilotMCPBackEnd(BaseLLM):
             trace_status = "provider_error"
 
         finally:
+            cleanup_errors = []
+            if unsubscribe is not None:
+                try:
+                    unsubscribe()
+                except Exception as error:
+                    cleanup_errors.append(f"event unsubscribe failed: {error}")
             if client_started:
-                await client.stop()
+                try:
+                    await client.stop()
+                except Exception as error:
+                    cleanup_errors.append(f"client stop failed: {error}")
+            if cleanup_errors:
+                cleanup_detail = "; ".join(cleanup_errors)
+                provider_error = "; ".join(
+                    detail for detail in (provider_error, cleanup_detail) if detail
+                )
+                failure_category = "provider_error"
+                trace_status = "provider_error"
 
         latency_ms = (time.perf_counter() - started) * 1000
 
         return {
+            "schema_version": "1.0",
             "response": response_text,
             "scenario_id": self.session_options.get("scenario_id"),
+            "agent_runtime": "copilot-sdk",
+            "model_provider": "copilot",
             "tool_calls": tool_calls,
             "tool_results": tool_results,
             "trace_status": trace_status,
+            "unmatched_event_ids": unmatched_event_ids,
             "provider_error": provider_error,
             "failure_category": failure_category,
             "usage": usage,

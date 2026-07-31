@@ -46,7 +46,7 @@ def my_operation(arg1: float, arg2: float) -> dict[str, Any]:
 
 ### 3. Add unit tests
 
-Edit or create a test file in [tests/contracts/](tests/contracts/):
+Add focused cases to [evals/eval_python/test_agent/test_scenarios_deterministic.py](evals/eval_python/test_agent/test_scenarios_deterministic.py):
 
 ```python
 @pytest.mark.parametrize(
@@ -84,14 +84,11 @@ Edit [evals/golden/scenarios.json](evals/golden/scenarios.json):
 ### 5. Run tests
 
 ```bash
-# Unit tests
-python -m pytest tests/contracts/test_operations.py -v
+# Deterministic fixture and operation tests
+python -m pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
 
-# Deterministic fixture tests
-python evals/run_scenarios.py --repetitions 1 --output results.json
-
-# Verify all tests pass
-python -m pytest tests/ -v
+# Verify all offline tests pass
+python -m pytest -m "not live"
 ```
 
 ## Adding a New Evaluation Scenario
@@ -123,8 +120,7 @@ python -m pytest tests/ -v
 ### 2. Test deterministically
 
 ```bash
-python evals/run_scenarios.py --output results.json
-python -m pytest tests/model_free/test_all_fixtures.py -v
+python -m pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
 ```
 
 ## Creating a New Evaluation Adapter
@@ -248,26 +244,19 @@ pip install -e ".[my_framework]"
 ### Deterministic checks (no API key required)
 
 ```bash
-# Format and lint
-python -m black evals/ src/ tests/
-python -m pylint evals/ src/ tests/
+# Install the package and offline test dependencies
+python -m pip install -e ".[dev]"
 
-# Type checking
-python -m mypy src/ --strict
-
-# Unit tests
-python -m pytest tests/ -v
-
-# Deterministic fixture evaluation
-python evals/run_scenarios.py --output results.json
+# Run deterministic tests without external providers
+python -m pytest -m "not live"
 ```
 
 ### Optional: Live evaluation
 
 ```bash
-# For DeepEval
+# For DeepEval and Copilot SDK
 export RUN_LLM_EVALS=1
-python -m pytest evals/deepeval/correctness/test_correctness.py -v
+python -m pytest evals/eval_python/test_agent/test_scenarios_live.py -v -s
 
 # For your adapter
 python evals/my_framework/run.py --repetitions 2
@@ -278,8 +267,7 @@ python evals/my_framework/run.py --repetitions 2
 - [ ] New operation: unit test, MCP test, scenario, expected result added
 - [ ] New scenario: evals/golden/scenarios.json updated with its expected outcome
 - [ ] New adapter: adapter.py, test_adapter.py, run.py, pyproject.toml updated
-- [ ] All deterministic tests pass: `pytest tests/ -v`
-- [ ] Fixture evaluation passes: `python evals/run_scenarios.py`
+- [ ] All deterministic tests pass: `python -m pytest -m "not live"`
 - [ ] Normalized result schema validated
 - [ ] Error categories used correctly (invalid_arguments, division_by_zero, domain_error, non_finite_result)
 - [ ] Documentation updated (docstrings, README if needed)
@@ -314,4 +302,4 @@ Verify that:
 
 - Review existing operations in [src/mcp_app/operations.py](src/mcp_app/operations.py)
 - See scenario examples in [evals/golden/scenarios.json](evals/golden/scenarios.json)
-- Check adapter reference: [evals/deepeval/correctness/adapter.py](evals/deepeval/correctness/adapter.py)
+- Check the Python backend reference: [evals/eval_python/copilot_backend.py](evals/eval_python/copilot_backend.py)

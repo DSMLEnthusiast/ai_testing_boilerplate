@@ -48,13 +48,17 @@ from deepeval.tracing import observe, update_current_trace
 from ..conftest import get_live_test_skip_reason
 from ..copilot_backend import create_copilot_backend
 from ..copilot_llm import CopilotLLMJudge
-from ..trace import normalize_tool_trace, to_deepeval_tool_calls
+from ..trace import normalize_tool_trace, require_successful_run, to_deepeval_tool_calls
 
 
 skip_if_not_live = pytest.mark.skipif(
     get_live_test_skip_reason() is not None,
     reason=get_live_test_skip_reason() or "unknown reason",
 )
+
+
+def _run_live_agent(backend: Any, user_input: str) -> dict[str, Any]:
+    return dict(require_successful_run(backend.run(user_input)))
 
 
 def _require_live_agent_scenario(scenario: dict[str, Any]) -> None:
@@ -119,7 +123,7 @@ class TestScenariosToolCorrectness:
                     expected_output=golden.expected_output,
                 )
 
-            result = backend.run(user_input)
+            result = _run_live_agent(backend, user_input)
             actual_calls = normalize_tool_trace(result)
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
@@ -173,7 +177,7 @@ class TestScenariosAnswerRelevancy:
         # Define agent with tracing
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
-            result = backend.run(user_input)
+            result = _run_live_agent(backend, user_input)
             update_current_trace(output=result.get("response", ""))
             return str(result.get("response", ""))
 
@@ -206,7 +210,7 @@ class TestScenariosTaskCompletion:
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
-            result = backend.run(user_input)
+            result = _run_live_agent(backend, user_input)
             actual_calls = normalize_tool_trace(result)
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
@@ -252,7 +256,7 @@ class TestScenariosStepEfficiency:
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
-            result = backend.run(user_input)
+            result = _run_live_agent(backend, user_input)
             actual_calls = normalize_tool_trace(result)
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
@@ -295,7 +299,7 @@ class TestScenariosPromptAlignment:
 
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
-            result = backend.run(user_input)
+            result = _run_live_agent(backend, user_input)
             update_current_trace(output=result.get("response", ""))
             return str(result.get("response", ""))
 
