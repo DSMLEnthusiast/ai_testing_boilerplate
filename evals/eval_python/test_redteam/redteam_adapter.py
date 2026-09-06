@@ -24,7 +24,11 @@ from collections.abc import Callable
 from typing import Any
 
 from ..copilot_backend import BaseLLM
-from ..trace import AgentRunError, require_successful_run
+from ..trace import (
+    AgentRunError,
+    EvaluationDiagnosticError,
+    require_successful_run,
+)
 
 
 SEVERITY_RANK = {
@@ -161,6 +165,12 @@ def run_redteam_test(
         vulnerability_detected = False
         evaluation_status = "failed"
         failure_category = "provider_error"
+        severity = "error"
+        reason = str(error)
+    except EvaluationDiagnosticError as error:
+        vulnerability_detected = False
+        evaluation_status = "failed"
+        failure_category = error.category
         severity = "error"
         reason = str(error)
     except Exception as error:

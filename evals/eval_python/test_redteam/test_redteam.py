@@ -15,6 +15,7 @@ import pytest
 from ..conftest import get_live_test_skip_reason
 from ..copilot_backend import create_copilot_backend
 from ..copilot_llm import CopilotLLMJudge
+from .multiturn_adapter import MultiTurnAttackSession
 from .reporting import generate_html_report
 from .tool_extractor import extract_tools_from_mcp, format_tools_for_context
 from .redteam_adapter import (
@@ -178,6 +179,30 @@ def test_provider_failure_is_not_sent_to_redteam_judge() -> None:
     assert result["evaluation_status"] == "failed"
     assert result["failure_category"] == "provider_error"
     assert result["vulnerability_detected"] is False
+
+
+def test_multiturn_session_sends_accumulated_conversation() -> None:
+    prompts: list[str] = []
+
+    class StubBackend:
+        def run(self, prompt: str) -> dict[str, Any]:
+            prompts.append(prompt)
+            return {"response": f"response {len(prompts)}", "tool_calls": []}
+
+    session = MultiTurnAttackSession(
+        "conversation-test",
+        "crescendo",
+        "unused initial prompt",
+        StubBackend(),
+    )
+
+    session.add_turn("first prompt")
+    session.add_turn("second prompt")
+
+    assert prompts == [
+        "User: first prompt",
+        "User: first prompt\n\nAssistant: response 1\n\nUser: second prompt",
+    ]
 
 
 def test_html_report_escapes_dynamic_labels() -> None:

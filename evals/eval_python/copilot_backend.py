@@ -122,6 +122,15 @@ class CopilotMCPBackEnd(BaseLLM):
 
     def __init__(self, **session_options: Any) -> None:
         self.session_options = session_options
+        timeout_value = session_options.get(
+            "timeout", os.environ.get("COPILOT_TIMEOUT_SECONDS", "60")
+        )
+        try:
+            self.timeout_seconds = float(timeout_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Copilot timeout must be a positive number of seconds") from error
+        if self.timeout_seconds <= 0:
+            raise ValueError("Copilot timeout must be a positive number of seconds")
 
     def _prepare_prompt(self, prompt: str) -> str:
         return prompt
@@ -168,19 +177,38 @@ class CopilotMCPBackEnd(BaseLLM):
         tool_calls_by_id: dict[str, dict[str, Any]] = {}
         tool_results = []
         unmatched_event_ids: list[str] = []
+        event_types: list[str] = []
         response_text = ""
         usage = {}
         trace_status = "unavailable"
         provider_error = None
         failure_category = None
 
+        def report_progress(stage: str) -> None:
+            if os.environ.get("COPILOT_PROGRESS", "1") != "0":
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                scenario_id = self.session_options.get("scenario_id", "-")
+                print(
+                    f"[copilot] scenario={scenario_id} stage={stage} "
+                    f"elapsed_ms={elapsed_ms:.0f}",
+                    flush=True,
+                )
+
         try:
-            await client.start()
+            report_progress("starting_client")
+            await asyncio.wait_for(client.start(), timeout=self.timeout_seconds)
             client_started = True
-            session = await client.create_session(self._build_session_config(root))
+            report_progress("client_started")
+            session = await asyncio.wait_for(
+                client.create_session(self._build_session_config(root)),
+                timeout=self.timeout_seconds,
+            )
+            report_progress("session_created")
 
             def handle_event(event: Any) -> None:
                 event_type = getattr(getattr(event, "type", None), "value", None)
+                if isinstance(event_type, str) and event_type not in event_types:
+                    event_types.append(event_type)
                 data = getattr(event, "data", None)
                 if event_type == "assistant.message":
                     for request in getattr(data, "tool_requests", None) or []:
@@ -204,7 +232,12 @@ class CopilotMCPBackEnd(BaseLLM):
                     tool_call["result"] = getattr(result, "content", result)
 
             unsubscribe = session.on(handle_event)
-            response = await session.send_and_wait({"prompt": self._prepare_prompt(prompt)})
+            report_progress("waiting_for_agent")
+            response = await asyncio.wait_for(
+                session.send_and_wait({"prompt": self._prepare_prompt(prompt)}),
+                timeout=self.timeout_seconds,
+            )
+            report_progress("agent_response_received")
 
             # Extract response content
             if hasattr(response.data, "content"):
@@ -228,6 +261,7 @@ class CopilotMCPBackEnd(BaseLLM):
             provider_error = str(error)
             failure_category = "provider_error"
             trace_status = "provider_error"
+            report_progress("provider_error")
 
         finally:
             cleanup_errors = []
@@ -238,7 +272,10 @@ class CopilotMCPBackEnd(BaseLLM):
                     cleanup_errors.append(f"event unsubscribe failed: {error}")
             if client_started:
                 try:
-                    await client.stop()
+                    report_progress("stopping_client")
+                    await asyncio.wait_for(
+                        client.stop(), timeout=self.timeout_seconds
+                    )
                 except Exception as error:
                     cleanup_errors.append(f"client stop failed: {error}")
             if cleanup_errors:
@@ -248,6 +285,8 @@ class CopilotMCPBackEnd(BaseLLM):
                 )
                 failure_category = "provider_error"
                 trace_status = "provider_error"
+
+            report_progress("complete")
 
         latency_ms = (time.perf_counter() - started) * 1000
 
@@ -261,6 +300,7 @@ class CopilotMCPBackEnd(BaseLLM):
             "tool_results": tool_results,
             "trace_status": trace_status,
             "unmatched_event_ids": unmatched_event_ids,
+            "event_types": event_types,
             "provider_error": provider_error,
             "failure_category": failure_category,
             "usage": usage,
@@ -326,8 +366,6 @@ async def run_batch_async(
     Returns:
         List of results in scenario order
     """
-    import asyncio
-
     semaphore = asyncio.Semaphore(concurrency)
 
     async def run_with_semaphore(scenario: dict[str, Any]) -> dict[str, Any]:

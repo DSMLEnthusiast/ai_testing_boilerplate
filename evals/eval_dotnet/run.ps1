@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.Parent.FullName
-$MeaiDir = Join-Path $RepoRoot "evals" "meaieval"
+$MeaiDir = Join-Path $RepoRoot "evals" "eval_dotnet"
 
 Write-Host "MEAI Evaluation Runner" -ForegroundColor Green
 Write-Host "Repository root: $RepoRoot"

@@ -124,7 +124,7 @@ def generate_attacks_with_deepteam(
         vulnerability_class = vulnerability_classes.get(config["deepteam_class"])
         if vulnerability_class is None:
             print(
-                f"Warning: DeepTeam 1.0.7 has no supported class for "
+                f"Warning: DeepTeam has no supported class for "
                 f"{vulnerability_name}; skipping"
             )
             continue
@@ -151,8 +151,6 @@ def generate_attacks_with_deepteam(
 
     if not deepteam_vulnerabilities:
         return []
-
-    from deepteam.attacks.attack_simulator import AttackSimulator
 
     simulator = AttackSimulator(
         purpose=enhanced_description,

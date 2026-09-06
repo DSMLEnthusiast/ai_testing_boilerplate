@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GitHub.Copilot;
+using GitHub.Copilot.Rpc;
 
 namespace MathMcp.MeaiEval;
 
@@ -12,14 +13,43 @@ namespace MathMcp.MeaiEval;
 /// </summary>
 public sealed class CopilotSdkAgent
 {
+    private static readonly HashSet<string> AllowedMathTools =
+    [
+        "add",
+        "subtract",
+        "multiply",
+        "divide",
+        "power",
+        "exp",
+        "log"
+    ];
+
+#pragma warning disable GHCP001
+    private static Task<PermissionDecision> HandlePermissionRequestAsync(
+        PermissionRequest request,
+        PermissionInvocation _)
+    {
+        if (request is PermissionRequestMcp mcpRequest &&
+            string.Equals(mcpRequest.ServerName, "math-mcp", StringComparison.Ordinal) &&
+            AllowedMathTools.Contains(mcpRequest.ToolName))
+        {
+            return Task.FromResult(PermissionDecision.ApproveOnce());
+        }
+
+        return Task.FromResult(PermissionDecision.Reject("Only registered math MCP tools are allowed."));
+    }
+#pragma warning restore GHCP001
+
     public async Task<EvaluationResult> RunAsync(
         Scenario scenario,
         CancellationToken cancellationToken = default)
     {
         var root = FindRepositoryRoot();
         var started = Stopwatch.GetTimestamp();
-        var toolCalls = new Dictionary<string, Dictionary<string, object?>>();
+        var toolCallsById = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
+        var toolCallOrder = new List<Dictionary<string, object?>>();
         var passed = false;
+        var responseText = string.Empty;
 
         try
         {
@@ -29,12 +59,11 @@ public sealed class CopilotSdkAgent
             await using var session = await client.CreateSessionAsync(new SessionConfig
             {
                 Model = Environment.GetEnvironmentVariable("COPILOT_MODEL") ?? "gpt-4.1",
-                OnPermissionRequest = PermissionHandler.ApproveAll,
+                OnPermissionRequest = HandlePermissionRequestAsync,
                 McpServers = new Dictionary<string, McpServerConfig>
                 {
                     ["math-mcp"] = new McpStdioServerConfig
                     {
-                        // Use Python executable from environment or default to "python"
                         Command = Environment.GetEnvironmentVariable("PYTHON") ?? "python",
                         Args = ["-m", "mcp_app.server"],
                         Env = new Dictionary<string, string>
@@ -53,35 +82,51 @@ public sealed class CopilotSdkAgent
                 {
                     case ToolExecutionStartEvent startedEvent:
                         var startedData = startedEvent.Data;
-                        toolCalls[startedData.ToolCallId] = new Dictionary<string, object?>
+                        if (string.IsNullOrWhiteSpace(startedData.ToolCallId))
                         {
-                            ["event_id"] = startedData.ToolCallId,
-                            ["name"] = startedData.McpToolName ?? startedData.ToolName,
-                            ["arguments"] = startedData.Arguments,
-                            ["mcp_server"] = startedData.McpServerName
-                        };
+                            break;
+                        }
+
+                        if (!toolCallsById.TryGetValue(startedData.ToolCallId, out var toolCall))
+                        {
+                            toolCall = new Dictionary<string, object?>();
+                            toolCallsById[startedData.ToolCallId] = toolCall;
+                            toolCallOrder.Add(toolCall);
+                        }
+
+                        toolCall["event_id"] = startedData.ToolCallId;
+                        toolCall["name"] = startedData.McpToolName ?? startedData.ToolName;
+                        toolCall["arguments"] = startedData.Arguments;
+                        toolCall["mcp_server"] = startedData.McpServerName;
                         break;
                     case ToolExecutionCompleteEvent completedEvent:
                         var completedData = completedEvent.Data;
-                        if (!toolCalls.TryGetValue(completedData.ToolCallId, out var toolCall))
+                        if (string.IsNullOrWhiteSpace(completedData.ToolCallId))
                         {
-                            toolCall = new Dictionary<string, object?>
+                            break;
+                        }
+
+                        if (!toolCallsById.TryGetValue(completedData.ToolCallId, out var completedToolCall))
+                        {
+                            completedToolCall = new Dictionary<string, object?>
                             {
                                 ["event_id"] = completedData.ToolCallId
                             };
-                            toolCalls[completedData.ToolCallId] = toolCall;
+                            toolCallsById[completedData.ToolCallId] = completedToolCall;
+                            toolCallOrder.Add(completedToolCall);
                         }
-                        toolCall["result"] = completedData.Result;
-                        toolCall["success"] = completedData.Success;
-                        toolCall["error"] = completedData.Error?.Message;
+
+                        completedToolCall["result"] = completedData.Result;
+                        completedToolCall["success"] = completedData.Success;
+                        completedToolCall["error"] = completedData.Error?.Message;
                         break;
                 }
             });
 
             var response = await session.SendAndWaitAsync(new MessageOptions { Prompt = scenario.Prompt });
-            var text = response?.Data.Content ?? string.Empty;
+            responseText = ExtractResponseText(response);
 
-            var failureCategory = ScenarioAssertions.GetFailureCategory(scenario, text);
+            var failureCategory = ScenarioAssertions.GetFailureCategory(scenario, responseText, toolCallOrder);
             passed = failureCategory is null;
 
             var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -89,8 +134,8 @@ public sealed class CopilotSdkAgent
                 RunId: $"copilot-{scenario.Id}",
                 ScenarioId: scenario.Id,
                 ModelProvider: "github-copilot-sdk",
-                Response: text,
-                ToolCalls: toolCalls.Values.ToList(),
+                Response: responseText,
+                ToolCalls: toolCallOrder,
                 Passed: passed,
                 FailureCategory: failureCategory,
                 LatencyMilliseconds: elapsed,
@@ -104,12 +149,44 @@ public sealed class CopilotSdkAgent
                 ScenarioId: scenario.Id,
                 ModelProvider: "github-copilot-sdk",
                 Response: $"Error: {ex.Message}",
-                ToolCalls: toolCalls.Values.ToList(),
+                ToolCalls: toolCallOrder,
                 Passed: false,
                 FailureCategory: "provider_error",
                 LatencyMilliseconds: elapsed,
                 RepetitionIndex: 0);
         }
+    }
+
+    private static string ExtractResponseText(object? response)
+    {
+        if (response is null)
+        {
+            return string.Empty;
+        }
+
+        foreach (var candidate in new[] { response, GetPropertyValue(response, "Data") })
+        {
+            if (candidate is null)
+            {
+                continue;
+            }
+
+            foreach (var propertyName in new[] { "Content", "Text", "Output" })
+            {
+                var value = GetPropertyValue(candidate, propertyName);
+                if (value is string text && !string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+        }
+
+        return response.ToString() ?? string.Empty;
+    }
+
+    private static object? GetPropertyValue(object? instance, string propertyName)
+    {
+        return instance?.GetType().GetProperty(propertyName)?.GetValue(instance);
     }
 
     /// <summary>
@@ -127,73 +204,3 @@ public sealed class CopilotSdkAgent
     }
 }
 
-internal static class ScenarioAssertions
-{
-    public static string? GetFailureCategory(Scenario scenario, string response)
-    {
-        if (!string.IsNullOrWhiteSpace(scenario.ExpectedError))
-        {
-            return ContainsError(response, scenario.ExpectedError)
-                ? null
-                : "expected_error_not_reported";
-        }
-
-        if (!string.IsNullOrWhiteSpace(scenario.ExpectedResponseContains) &&
-            !response.Contains(scenario.ExpectedResponseContains, StringComparison.OrdinalIgnoreCase))
-        {
-            return "expected_response_not_found";
-        }
-
-        if (scenario.Expected is not null && scenario.Expected.TryGetValue("value", out var value))
-        {
-            var expected = value is JsonElement element
-                ? element.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture)
-                : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
-            if (expected is null || !ContainsNumber(response, expected))
-            {
-                return "expected_value_not_found";
-            }
-        }
-
-        return null;
-    }
-
-    private static bool ContainsError(string response, string category)
-    {
-        if (response.Contains(category, StringComparison.OrdinalIgnoreCase)) return true;
-        var phrase = category switch
-        {
-            "division_by_zero" => "divide by zero",
-            "domain_error" => "domain",
-            "non_finite_result" => "overflow",
-            "invalid_arguments" => "invalid argument",
-            _ => category
-        };
-        return response.Contains(phrase, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ContainsNumber(string response, string expected)
-    {
-        if (!double.TryParse(expected, NumberStyles.Float, CultureInfo.InvariantCulture, out var expectedValue))
-        {
-            return false;
-        }
-
-        const string numberPattern = @"(?<![\w.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])";
-        foreach (Match match in Regex.Matches(response, numberPattern))
-        {
-            if (!double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var actualValue))
-            {
-                continue;
-            }
-
-            var tolerance = 1e-9 * Math.Max(1.0, Math.Max(Math.Abs(expectedValue), Math.Abs(actualValue)));
-            if (Math.Abs(expectedValue - actualValue) <= tolerance)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-}

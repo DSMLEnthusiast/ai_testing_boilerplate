@@ -5,7 +5,7 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-MEAI_DIR="$REPO_ROOT/evals/meaieval"
+MEAI_DIR="$REPO_ROOT/evals/eval_dotnet"
 
 REPETITIONS=1
 OUTPUT="meai_results.json"

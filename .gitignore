@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 # Test and evaluation results (generated output)
 test-results.json
+test-results/
 results.json
 *.html
 # DeepEval artifacts

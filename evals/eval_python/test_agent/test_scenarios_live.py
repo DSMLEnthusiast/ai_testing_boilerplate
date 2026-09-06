@@ -48,7 +48,11 @@ from deepeval.tracing import observe, update_current_trace
 from ..conftest import get_live_test_skip_reason
 from ..copilot_backend import create_copilot_backend
 from ..copilot_llm import CopilotLLMJudge
-from ..trace import normalize_tool_trace, require_successful_run, to_deepeval_tool_calls
+from ..trace import (
+    require_expected_tool_trace,
+    require_successful_run,
+    to_deepeval_tool_calls,
+)
 
 
 skip_if_not_live = pytest.mark.skipif(
@@ -124,7 +128,7 @@ class TestScenariosToolCorrectness:
                 )
 
             result = _run_live_agent(backend, user_input)
-            actual_calls = normalize_tool_trace(result)
+            actual_calls = require_expected_tool_trace(result, scenario["expected_tools"])
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
                 output=result.get("response", ""),
@@ -211,7 +215,9 @@ class TestScenariosTaskCompletion:
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
             result = _run_live_agent(backend, user_input)
-            actual_calls = normalize_tool_trace(result)
+            actual_calls = require_expected_tool_trace(
+                result, scenario.get("expected_tools", [])
+            )
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
                 output=result.get("response", ""),
@@ -257,7 +263,9 @@ class TestScenariosStepEfficiency:
         @observe(name="math_agent")
         def math_agent(user_input: str) -> str:
             result = _run_live_agent(backend, user_input)
-            actual_calls = normalize_tool_trace(result)
+            actual_calls = require_expected_tool_trace(
+                result, scenario.get("expected_tools", [])
+            )
             update_current_trace(
                 tools_called=to_deepeval_tool_calls(actual_calls),
                 output=result.get("response", ""),

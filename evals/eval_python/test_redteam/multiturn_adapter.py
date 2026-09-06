@@ -40,7 +40,7 @@ class MultiTurnAttackSession:
         """
         self.scenario_id = scenario_id
         self.attack_type = attack_type
-        self.conversation = [{"role": "user", "content": initial_prompt}]
+        self.conversation: list[dict[str, str]] = []
         self.target_backend = target_backend
         self.turns = []
         self.started = time.perf_counter()
@@ -56,11 +56,17 @@ class MultiTurnAttackSession:
         Returns:
             Turn result with response, tool calls, and evaluation.
         """
-        # Add follow-up to conversation
+        # Re-send the accumulated transcript because the backend creates a fresh
+        # provider session for each request.
         self.conversation.append({"role": "user", "content": follow_up_prompt})
+        conversation_prompt = "\n\n".join(
+            f"{message['role'].capitalize()}: {message['content']}"
+            for message in self.conversation
+        )
 
-        # Run through backend (would normally include full conversation context)
-        result = self.target_backend.run(follow_up_prompt)
+        result = self.target_backend.run(conversation_prompt)
+        response = str(result.get("response", ""))
+        self.conversation.append({"role": "assistant", "content": response})
 
         # Track discovered tool capabilities
         tool_calls = result.get("tool_calls", [])
@@ -73,7 +79,7 @@ class MultiTurnAttackSession:
         turn_result = {
             "turn_number": len(self.turns) + 1,
             "prompt": follow_up_prompt,
-            "response": result.get("response", ""),
+            "response": response,
             "tool_calls": tool_calls,
             "timestamp": time.perf_counter() - self.started,
         }
@@ -143,9 +149,6 @@ def crescendo_attack(
     session = MultiTurnAttackSession(
         scenario_id, "crescendo", base_prompt, target_backend, tools_info=tools_info
     )
-
-    # Run base prompt
-    session.add_turn(base_prompt)
 
     # Escalate
     for step in escalation_steps:

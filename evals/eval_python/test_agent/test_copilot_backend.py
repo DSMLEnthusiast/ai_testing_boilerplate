@@ -12,8 +12,17 @@ from ..copilot_backend import (
     _handle_math_permission_request,
     create_copilot_backend,
 )
-from ..copilot_llm import _deny_permission_request
-from ..trace import AgentRunError, classify_tool_trace, require_successful_run
+from ..copilot_llm import (
+    CopilotLLMJudge,
+    _deny_permission_request,
+    _structured_json_candidates,
+)
+from ..trace import (
+    AgentRunError,
+    JudgeSchemaError,
+    classify_tool_trace,
+    require_successful_run,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -104,3 +113,35 @@ def test_permission_handlers_only_allow_math_mcp_requests() -> None:
     for kind in ("shell", "write", "read", "url", "unknown"):
         assert _handle_math_permission_request({"kind": kind}, context)["kind"] == "denied-by-rules"
     assert _deny_permission_request({"kind": "mcp"}, context)["kind"] == "denied-by-rules"
+
+
+def test_structured_json_candidates_remove_fences_and_surrounding_text() -> None:
+    candidates = _structured_json_candidates(
+        'Here is the verdict:\n```json\n{"score": 1}\n```'
+    )
+
+    assert '{"score": 1}' in candidates
+
+
+def test_judge_parser_accepts_json_surrounded_by_explanation() -> None:
+    from pydantic import BaseModel
+
+    class Verdict(BaseModel):
+        score: int
+
+    parsed = CopilotLLMJudge._parse_response(
+        "The result is:\n```json\n{\"score\": 1}\n```",
+        Verdict,
+    )
+
+    assert parsed.score == 1
+
+
+def test_judge_parser_classifies_invalid_structured_output() -> None:
+    from pydantic import BaseModel
+
+    class Verdict(BaseModel):
+        score: int
+
+    with pytest.raises(JudgeSchemaError):
+        CopilotLLMJudge._parse_response("not json", Verdict)

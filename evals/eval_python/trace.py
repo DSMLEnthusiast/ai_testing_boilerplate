@@ -7,12 +7,32 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 
-class ToolTraceError(ValueError):
+class EvaluationDiagnosticError(RuntimeError):
+    """Base error carrying a stable category for persisted test reports."""
+
+    category = "evaluation_error"
+
+    def __init__(self, message: str, *, context: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.context = dict(context or {})
+
+
+class ToolTraceError(EvaluationDiagnosticError):
     """Raised when an agent trace cannot provide authoritative tool evidence."""
 
+    category = "tool_trace_missing"
 
-class AgentRunError(RuntimeError):
+
+class AgentRunError(EvaluationDiagnosticError):
     """Raised when a provider-backed agent run did not complete successfully."""
+
+    category = "agent_failure"
+
+
+class JudgeSchemaError(EvaluationDiagnosticError):
+    """Raised when a judge response cannot satisfy the requested schema."""
+
+    category = "judge_schema_error"
 
 
 def require_successful_run(agent_result: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -22,6 +42,21 @@ def require_successful_run(agent_result: Mapping[str, Any]) -> Mapping[str, Any]
         detail = agent_result.get("provider_error") or "no provider error detail"
         raise AgentRunError(f"Agent run failed ({failure_category}): {detail}")
     return agent_result
+
+
+def require_expected_tool_trace(
+    agent_trace: Mapping[str, Any], expected_tools: list[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Require captured tool evidence when a scenario expects tool calls."""
+    normalized_calls = normalize_tool_trace(agent_trace)
+    if expected_tools and not normalized_calls:
+        event_types = agent_trace.get("event_types") or []
+        raise ToolTraceError(
+            "Expected tool calls were not captured; "
+            f"trace_status={agent_trace.get('trace_status', 'missing')}, "
+            f"event_types={event_types}"
+        )
+    return normalized_calls
 
 
 def classify_tool_trace(

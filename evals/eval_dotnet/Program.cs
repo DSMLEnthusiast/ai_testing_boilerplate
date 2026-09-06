@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 namespace MathMcp.MeaiEval;
@@ -16,14 +17,15 @@ public sealed record EvaluationResult(
     int RepetitionIndex);
 
 public sealed record Scenario(
-    string Id,
-    string Prompt,
-    string TargetBoundary,
-    string RubricId,
-    List<Dictionary<string, object>>? ExpectedTools = null,
-    Dictionary<string, object>? Expected = null,
-    string? ExpectedError = null,
-    string? ExpectedResponseContains = null);
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("prompt")] string Prompt,
+    [property: JsonPropertyName("target_boundary")] string TargetBoundary,
+    [property: JsonPropertyName("rubric_id")] string RubricId,
+    [property: JsonPropertyName("expected_tools")] List<Dictionary<string, object?>>? ExpectedTools = null,
+    [property: JsonPropertyName("expected")] Dictionary<string, object>? Expected = null,
+    [property: JsonPropertyName("expected_error")] string? ExpectedError = null,
+    [property: JsonPropertyName("expected_response_contains")] string? ExpectedResponseContains = null,
+    [property: JsonPropertyName("expected_response")] string? ExpectedResponse = null);
 
 public sealed class MeaiEvaluator(IChatClient chatClient)
 {
@@ -43,7 +45,7 @@ public sealed class MeaiEvaluator(IChatClient chatClient)
             ModelProvider: modelProvider,
             Response: text,
             ToolCalls: [],
-            Passed: false, // Placeholder; real pass/fail logic depends on scenario type
+            Passed: false,
             FailureCategory: null,
             LatencyMilliseconds: elapsed,
             RepetitionIndex: repetitionIndex);
@@ -67,7 +69,10 @@ internal static class Program
         }
 
         var scenarioText = await File.ReadAllTextAsync(scenarioPath);
-        var scenarios = JsonSerializer.Deserialize<List<Scenario>>(scenarioText);
+        var scenarios = JsonSerializer.Deserialize<List<Scenario>>(scenarioText, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
 
         if (scenarios == null || scenarios.Count == 0)
         {
@@ -124,6 +129,15 @@ internal static class Program
         int repetitionIndex,
         string provider)
     {
+        var traceStatus = result.ToolCalls.Count == 0
+            ? "unavailable"
+            : result.ToolCalls.All(call =>
+                call.ContainsKey("name") &&
+                call.ContainsKey("arguments") &&
+                call.ContainsKey("result"))
+                ? "complete"
+                : "partial";
+
         return new Dictionary<string, object>
         {
             ["schema_version"] = "1.0",
@@ -137,18 +151,14 @@ internal static class Program
                 .Where(call => call.ContainsKey("result"))
                 .Select(call => call["result"])
                 .ToList(),
-            ["trace_status"] = result.ToolCalls.All(call =>
-                call.ContainsKey("name") &&
-                call.ContainsKey("arguments") &&
-                call.ContainsKey("result"))
-                ? "complete"
-                : "partial",
+            ["trace_status"] = traceStatus,
             ["repetition_index"] = repetitionIndex,
             ["passed"] = result.Passed,
             ["failure_category"] = result.FailureCategory ?? "none",
             ["latency_ms"] = result.LatencyMilliseconds,
             ["target_boundary"] = scenario.TargetBoundary,
-            ["rubric_id"] = scenario.RubricId
+            ["rubric_id"] = scenario.RubricId,
+            ["usage"] = new Dictionary<string, object>()
         };
     }
 

@@ -25,6 +25,147 @@ $env:PYTHONPATH = "src"
 python -m mcp_app.server
 ```
 
+## Test Commands
+
+Activate the repository virtual environment before running the commands:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install the dependencies needed for the test layers you plan to run:
+
+```powershell
+python -m pip install -e ".[dev]"                 # deterministic, integration, and contract tests
+python -m pip install -e ".[dev,live]"            # add live agent and DeepEval tests
+python -m pip install -e ".[dev,live,redteam]"   # add red-team generation
+```
+
+Run the Python test layers independently:
+
+```powershell
+# All offline Python tests; never imports the live scenario module or calls an external LLM
+python -m pytest -p no:deepeval `
+  evals/eval_python/test_agent/test_scenarios_deterministic.py `
+  evals/eval_python/test_agent/test_scenarios_integration.py `
+  evals/eval_python/test_agent/test_copilot_backend.py `
+  evals/eval_python/test_agent/test_result_contract.py `
+  evals/eval_python/test_redteam/test_redteam.py `
+  -m "not live" -v
+
+# Add a durable JSON report for post-run review
+python -m pytest -p no:deepeval `
+  evals/eval_python/test_agent/test_scenarios_deterministic.py `
+  evals/eval_python/test_agent/test_scenarios_integration.py `
+  -m "not live" -v `
+  --test-results-json test-results/offline.json
+
+# Deterministic MCP scenario contract
+python -m pytest evals/eval_python/test_agent/test_scenarios_deterministic.py -v
+
+# Local framework integration and normalized result-contract tests
+python -m pytest evals/eval_python/test_agent/test_scenarios_integration.py evals/eval_python/test_agent/test_copilot_backend.py evals/eval_python/test_agent/test_result_contract.py -v
+
+# Full live agent evaluation; requires authentication and real Copilot calls
+$env:RUN_LLM_EVALS = "1"
+
+# Required live preflight: agent + MCP tool trace + structured judge response
+$env:RUN_LLM_SMOKE = "1"
+python -m pytest evals/eval_python/test_agent/test_live_smoke.py -v -s `
+  --test-results-json test-results/live-smoke.json `
+  --junitxml=test-results/live-smoke.junit.xml
+
+# Run the full live matrix only after the smoke test passes
+python -m pytest evals/eval_python/test_agent/test_scenarios_live.py -v -s --tb=short `
+  --test-results-json test-results/live.json `
+  --junitxml=test-results/live.junit.xml
+
+# Offline red-team fixture checks
+python -m pytest evals/eval_python/test_redteam/test_redteam.py -m "not live" -k well_formed -v
+
+# Provider-backed red-team evaluation
+python -m pytest evals/eval_python/test_redteam/test_redteam.py -m live -v -s --tb=short `
+  --test-results-json test-results/redteam.json `
+  --junitxml=test-results/redteam.junit.xml
+
+# Compare normalized Python/.NET artifacts against the shared golden contract
+python -m evals.eval_python.result_conformance `
+  test-results/python-results.json test-results/dotnet-results.json
+```
+
+Every pytest run writes JSON to `test-results/pytest-results.json` by default.
+Use `--test-results-json` or `PYTEST_RESULTS_JSON` to choose another path, and
+`--no-test-results` to disable it. The report includes safe run metadata,
+aggregate counts, per-test outcomes, durations, skip reasons, failure details,
+collection errors, and internal errors. It does not store tokens or raw model
+prompts/responses. Add `Tee-Object` when a human-readable terminal log is also
+needed:
+
+Failure records use stable categories where applicable: `agent_failure`,
+`judge_schema_error`, `provider_error`, `tool_trace_missing`,
+`test_configuration_error`, or `evaluation_error`. A provider or judge failure
+is not evidence of an agent vulnerability; red-team vulnerability evidence
+remains in the detailed red-team JSON report.
+
+```powershell
+python -m pytest evals/eval_python/test_agent/test_scenarios_live.py -v -s `
+  --test-results-json test-results/live.json 2>&1 |
+  Tee-Object test-results/live.log
+```
+
+The live commands also require `COPILOT_GITHUB_TOKEN` or a cached Copilot CLI
+login. Set `COPILOT_TIMEOUT_SECONDS` to bound each Copilot startup, session,
+request, and cleanup operation; progress output is enabled by default and can
+be disabled with `COPILOT_PROGRESS=0`:
+
+```powershell
+$env:COPILOT_TIMEOUT_SECONDS = "60"
+$env:COPILOT_PROGRESS = "1"
+copilot auth status
+```
+
+### Live Model Compatibility Notes
+
+The live smoke test is the compatibility gate for each selected agent and judge
+model. The current local `gpt-5.6-luna` run completed most scenarios, but also
+showed judge `Verdicts` schema-validation failures, one model-listing provider
+failure, and missing tool-trace failures. Treat those as compatibility or
+runtime findings until reproduced by the smoke test and classified in the JSON
+report; do not count them as model vulnerabilities automatically.
+
+| Agent model | Judge model | Smoke result | Last verified note |
+| --- | --- | --- | --- |
+| `gpt-5.6-luna` | `gpt-5.6-luna` | Passed | Agent, MCP trace, and structured judge parsing succeeded. |
+
+For repeated or tool-aware red-team runs, use the pytest options documented in
+[Red-Team Evaluation](#red-team-evaluation) or the standalone CLI:
+
+```powershell
+python -m evals.eval_python.test_redteam.redteam_run `
+  --backend copilot `
+  --model gpt-5-mini `
+  --repetitions 3 `
+  --output results-redteam.json
+```
+
+Run the .NET evaluation layer separately:
+
+```powershell
+# Restore and build
+dotnet restore evals/eval_dotnet/MathMcp.MeaiEval.csproj
+dotnet build evals/eval_dotnet/MathMcp.MeaiEval.csproj
+
+# Run all shared scenarios once
+dotnet run --project evals/eval_dotnet/MathMcp.MeaiEval.csproj
+
+# Or use the PowerShell runner with repetitions and an output path
+.\evals\eval_dotnet\run.ps1 -Build -Repetitions 3 -Output eval_results.json
+```
+
+The Python and .NET live layers are opt-in and can incur provider usage. Keep
+them out of normal CI unless credentials and external-service access are
+available.
+
 ## Optional LLM evaluation
 
 Install the desired optional dependencies:
@@ -253,6 +394,69 @@ score = judge.generate(prompt, schema=MetricType)
 - Use `@pytest.mark.parametrize` with scenario IDs for test discovery
 - Filter scenarios by type: `tool_scenarios`, `metric_only_scenarios`, `error_scenarios`, `security_scenarios`
 - Conftest provides fixture loading and credential validation
+
+## .NET MEAI / Copilot SDK Evaluation
+
+The `evals/eval_dotnet` project provides a Microsoft.Extensions.AI evaluation
+harness backed by the GitHub Copilot SDK. It loads the shared scenarios,
+invokes the local `math-mcp` server, captures response and tool-call data, and
+writes normalized results compatible with the other evaluation paths.
+
+### Requirements and Setup
+
+- .NET 8.0 or later
+- `Microsoft.Extensions.AI` 10.4.0
+- `GitHub.Copilot.SDK` 1.0.0-beta.8
+- Python 3.10+ with the MCP server installed
+
+Install the Python dependencies, then restore the .NET project:
+
+```powershell
+python -m pip install -e ".[dev]"
+dotnet restore evals/eval_dotnet/MathMcp.MeaiEval.csproj
+```
+
+Configure the Copilot model and Python executable when the defaults are not
+suitable:
+
+```powershell
+$env:COPILOT_MODEL = "gpt-4.1"
+$env:PYTHON = "python"
+```
+
+### Build and Run
+
+```powershell
+dotnet build evals/eval_dotnet/MathMcp.MeaiEval.csproj
+
+# Run all scenarios once
+dotnet run --project evals/eval_dotnet/MathMcp.MeaiEval.csproj
+
+# Repeat scenarios and choose an output file
+dotnet run --project evals/eval_dotnet/MathMcp.MeaiEval.csproj -- `
+  --repetitions 3 --output eval_results.json
+```
+
+The harness also accepts `--provider` for the provider label in normalized
+results. Output records include the scenario and repetition IDs, response,
+tool calls and results, trace status, pass/fail state, failure category,
+latency, target boundary, and rubric ID.
+
+### .NET Adapter Components
+
+- `evals/eval_dotnet/CopilotSdkAgent.cs`: starts the Copilot session, configures
+  the local MCP server, and captures response and tool events.
+- `evals/eval_dotnet/Program.cs`: loads `evals/golden/scenarios.json`, runs
+  repetitions, normalizes results, and writes JSON output.
+- `evals/eval_dotnet/ScenarioAssertions.cs`: checks expected response text,
+  numeric values, errors, and ordered tool-call arguments.
+
+The adapter uses the same scenarios and MCP server as the Python evaluations,
+so its results can be compared with the deterministic and DeepEval paths.
+When the Copilot SDK does not provide a complete tool-event payload, the
+normalized record reports an unavailable or partial trace and the scenario
+contract remains authoritative. Model comparison and statistical inference are
+deferred to [the statistical evaluation plan](docs/future_statistical_tests_model_comparison_plan.md).
 
 ## Development Guidelines
 
